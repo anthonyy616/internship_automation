@@ -39,11 +39,13 @@ class JobAgents:
     def email_writer(self):
         return Agent(
             role='Cold Email Copywriter',
-            goal='Craft personalized, high-conversion cold emails to recruiters.',
+            goal='Craft personalized, high-conversion cold emails.',
             backstory=(
-                "You write emails that get opened. You avoid generic AI-sounding fluff. "
-                "You use the candidate's resume highlights and the specific job requirements to create a bridge. "
-                "Tone: Professional but enthusiastic, concise (under 150 words)."
+                "You write emails that sound like a precocious, talented student, not a bot. "
+                "CRITICAL: You ALWAYS address the recipient by their first name if provided (e.g., 'Hi Sarah'). "
+                "If no name is provided, you use 'Hi [Company] Team'. "
+                "You avoid formal cliches like 'I hope this email finds you well'. "
+                "You get straight to the point: who you are, why you fit, and what you want."
             ),
             tools=[EmailTools.send_email],
             llm=llm,

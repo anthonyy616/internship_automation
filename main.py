@@ -73,27 +73,61 @@ def run_internship_search_flow():
     # For this prototype, we'll ask user which one to apply to from the result, 
     # or just proceed with the last context.
     
+    
     print("\n--- PHASE 2: HUMAN APPROVAL ---\n")
-    # HITL: Read jobs from DB logic could go here. 
-    # For now, we trust the agent saved them and we ask user if they want to proceed with outreach.
+    
+    # In a real scenario, we'd fetch the most recent 'found' job from DB.
+    # For this prototype, we'll verify if we have data passed from the crawler.
+    # We will simulate fetching the "best" result for the demo.
+    
+    # Mocking data passing if agent output is just text. 
+    # ideally Scraper outputs JSON structure. 
+    # Let's assume we selected one job:
+    selected_job = {
+        "company": "Tech Corp", 
+        "title": "Software Intern", 
+        "manager_name": "Sarah Jones", # Scraper should find this
+        "description": "Work on distributed systems and python."
+    }
     
     proceed = input("Do you want to proceed with generating emails/applications for saved jobs? (y/n): ")
     if proceed.lower() != 'y':
         print("Stopping here.")
         return
 
+    # Load Template
+    with open('templates/email_template.txt', 'r') as t:
+        template_text = t.read()
+
     # 3. Outreach Task (Email)
+    # We explicitly instruct the LLM to use the template and fill in the blanks
     email_task = Task(
         description=f"""
-            For the recently found jobs, draft a personalized cold email.
-            Candidate: {config['user_profile']['name']}
+            Draft a cold email for the following job using the provided template.
+            
+            JOB DETAILS:
+            Company: {selected_job['company']}
+            Title: {selected_job['title']}
+            Hiring Manager: {selected_job['manager_name']} (If "None" or "Unknown", use "Hiring Team")
+            Context: {selected_job['description']}
+            
+            CANDIDATE DETAILS:
+            Name: {config['user_profile']['name']}
+            Year: {config['user_profile']['university_year']}
             Major: {config['user_profile']['major']}
             Skills: {', '.join(config['user_profile']['skills'])}
-            Resume Context: (Assume standard high performer).
             
-            Write the email subject and body for ONE of the top jobs found.
+            TEMPLATE:
+            {template_text}
+            
+            INSTRUCTIONS:
+            - Replace all {{placeholders}} with real data.
+            - If Hiring Manager is known, address them by first name (e.g. "Hi Sarah").
+            - If unknown, use "Hi {selected_job['company']} Team".
+            - The "Personal Hook" should be generated based on the Job Description + Candidate Skills.
+            - Keep it human, casual but professional.
         """,
-        expected_output="Drafted Email Subject and Body.",
+        expected_output="Final Email Subject and Body.",
         agent=email_writer
     )
     
