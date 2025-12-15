@@ -1,0 +1,6 @@
+# Ignore venv
+
+/.env
+/data/jobs.db
+/.venv
+

@@ -1,0 +1,9 @@
+crewai
+langgraph
+langchain-openai
+playwright
+playwright-stealth
+beautifulsoup4
+pandas
+pyyaml
+python-dotenv
