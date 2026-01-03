@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Internship Bot | Dashboard</title>
+    <meta name="description" content="AI-powered autonomous internship application bot">
+    <link rel="stylesheet" href="/css/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">🤖</span>
+                    <span class="logo-text">InternBot</span>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-section="dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" data-section="jobs">
+                    <span class="nav-icon">💼</span>
+                    <span>Jobs</span>
+                </a>
+                <a href="#" class="nav-item" data-section="logs">
+                    <span class="nav-icon">📜</span>
+                    <span>Activity Logs</span>
+                </a>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-dot disconnected"></span>
+                    <span>Disconnected</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="main-header">
+                <h1 id="pageTitle">Dashboard</h1>
+                <div class="header-actions">
+                    <div class="bot-status" id="botStatus">
+                        <span class="status-indicator idle"></span>
+                        <span class="status-text">Idle</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dashboard Section -->
+            <section id="dashboardSection" class="content-section active">
+                <!-- Configuration Card -->
+                <div class="config-card glass-card">
+                    <h2>Start New Session</h2>
+                    <form id="configForm">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="regions">Target Regions</label>
+                                <div class="checkbox-group" id="regionCheckboxes">
+                                    <label class="checkbox-item">
+                                        <input type="checkbox" name="regions" value="EU">
+                                        <span class="checkbox-label">🇪🇺 EU</span>
+                                    </label>
+                                    <label class="checkbox-item">
+                                        <input type="checkbox" name="regions" value="UK">
+                                        <span class="checkbox-label">🇬🇧 UK</span>
+                                    </label>
+                                    <label class="checkbox-item">
+                                        <input type="checkbox" name="regions" value="Nigeria">
+                                        <span class="checkbox-label">🇳🇬 Nigeria</span>
+                                    </label>
+                                    <label class="checkbox-item">
+                                        <input type="checkbox" name="regions" value="Turkiye">
+                                        <span class="checkbox-label">🇹🇷 Türkiye</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="contactEmail">Contact Email (for companies)</label>
+                                <input type="email" id="contactEmail" name="contact_email" 
+                                       placeholder="your-email@example.com" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="portfolioUrl">Portfolio URL</label>
+                                <input type="url" id="portfolioUrl" name="portfolio_url" 
+                                       value="https://anthonyy616.vercel.app" placeholder="https://your-portfolio.com">
+                            </div>
+                        </div>
+                        
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="maxApplications">Max Applications</label>
+                                <input type="number" id="maxApplications" name="max_applications" 
+                                       value="50" min="1" max="200">
+                            </div>
+                            <div class="form-group">
+                                <label for="maxEmails">Max Emails</label>
+                                <input type="number" id="maxEmails" name="max_emails" 
+                                       value="50" min="1" max="200">
+                            </div>
+                            <div class="form-group checkbox-single">
+                                <label class="checkbox-item">
+                                    <input type="checkbox" id="dryRun" name="dry_run">
+                                    <span class="checkbox-label">Dry Run (no actual emails)</span>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary" id="startBtn">
+                                <span class="btn-icon">▶</span>
+                                Start Bot
+                            </button>
+                            <button type="button" class="btn btn-danger" id="stopBtn" disabled>
+                                <span class="btn-icon">⏹</span>
+                                Stop Bot
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Stats Cards -->
+                <div class="stats-grid">
+                    <div class="stat-card glass-card">
+                        <div class="stat-icon">💼</div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="statJobsFound">0</span>
+                            <span class="stat-label">Jobs Found</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass-card">
+                        <div class="stat-icon">📝</div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="statApplications">0</span>
+                            <span class="stat-label">Applications</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass-card">
+                        <div class="stat-icon">📧</div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="statEmails">0</span>
+                            <span class="stat-label">Emails Sent</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass-card">
+                        <div class="stat-icon">🌍</div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="statRegions">-</span>
+                            <span class="stat-label">Active Regions</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Real-time Logs -->
+                <div class="logs-card glass-card">
+                    <div class="logs-header">
+                        <h3>Real-time Activity</h3>
+                        <button class="btn btn-small" id="clearLogs">Clear</button>
+                    </div>
+                    <div class="logs-container" id="logsContainer">
+                        <div class="log-placeholder">
+                            <span>Activity logs will appear here when the bot starts...</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Jobs Section -->
+            <section id="jobsSection" class="content-section">
+                <div class="section-header">
+                    <h2>Found Jobs</h2>
+                    <div class="filters">
+                        <select id="jobsRegionFilter">
+                            <option value="">All Regions</option>
+                            <option value="EU">EU</option>
+                            <option value="UK">UK</option>
+                            <option value="Nigeria">Nigeria</option>
+                            <option value="Turkiye">Türkiye</option>
+                        </select>
+                        <select id="jobsStatusFilter">
+                            <option value="">All Status</option>
+                            <option value="found">Found</option>
+                            <option value="applied">Applied</option>
+                            <option value="emailed">Emailed</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="jobs-table-container glass-card">
+                    <table class="jobs-table" id="jobsTable">
+                        <thead>
+                            <tr>
+                                <th>Company</th>
+                                <th>Title</th>
+                                <th>Region</th>
+                                <th>Source</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                            </tr>
+                        </thead>
+                        <tbody id="jobsTableBody">
+                            <tr class="empty-row">
+                                <td colspan="6">No jobs found yet. Start the bot to begin searching.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Logs Section -->
+            <section id="logsSection" class="content-section">
+                <div class="section-header">
+                    <h2>Activity Logs</h2>
+                    <div class="filters">
+                        <select id="logsLevelFilter">
+                            <option value="">All Levels</option>
+                            <option value="INFO">Info</option>
+                            <option value="SUCCESS">Success</option>
+                            <option value="WARNING">Warning</option>
+                            <option value="ERROR">Error</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="full-logs-container glass-card" id="fullLogsContainer">
+                    <div class="log-placeholder">
+                        <span>No logs available.</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/js/websocket.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>
