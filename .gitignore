@@ -4,3 +4,10 @@
 /data/jobs.db
 /.venv
 
+config/config.yaml
+
+db/database.py
+
+templates/email_template.txt
+
+supabase_schema.sql
