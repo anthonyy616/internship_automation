@@ -2,7 +2,7 @@ user_profile:
   name: "Anthony Ogbuah"
   email: "anthonyogbuah@gmail.com"
   university_year: "Junior"
-  major: "Computer Science"
+  major: "Computer Engineering"
   skills: ["Python", "Typescript", "SQL", "C/C++", "Machine Learning", "Deep Learning", "Docker", "Git", "Assembly"]
   
 paths:
@@ -11,8 +11,7 @@ paths:
 
 search_criteria:
   keywords: ["Software Engineer Intern", "AI Intern", "Computer Engineer", "Data Engineer" , "Data Analyst", "Machine Learning Engineer", "Embedded Systems"]
-  locations: ["Remote", "New York"]
-
+  locations: ["Remote", "On-Site", "Hybrid","London", "Sweden", "Switzerland", "Turkey", "Turkiye","Norway", "Denmark", "Finland", "Iceland", "Netherlands", "Belgium", "Luxembourg", "Germany", "Austria", "Italy", "France", "Spain", "Portugal", "Cyprus", "TRNC","Malta", "Ireland", "United Kingdom", "Nigeria"]
 safety:
   max_actions_per_day: 200
   min_delay_seconds: 10

@@ -1,4 +1,5 @@
 crewai
+openai
 langgraph
 langchain-openai
 playwright

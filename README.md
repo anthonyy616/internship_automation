@@ -204,20 +204,12 @@ internship-automation-bot/
 └── templates/           # Email templates
 ```
 
----
 
 
----
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
----
 
 ##  Author
 
-**Anthony Ogbuah** {LINK: https://anthonyy616.vercel.app} 
+**Anthony Ogbuah** {LINK: https://anthonyy616.vercel.app } 
 Computer Engineering (Major) Junior | AI Engineer
 
 ---
