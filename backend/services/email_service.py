@@ -188,10 +188,20 @@ Best regards,
     
     def _send_smtp(self, msg: MIMEMultipart):
         """Send email via SMTP (blocking operation)."""
-        with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+        try:
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30)
+            server.ehlo()
             server.starttls()
+            server.ehlo()
             server.login(self.smtp_user, self.smtp_password)
             server.send_message(msg)
+            server.quit()
+        except smtplib.SMTPAuthenticationError as e:
+            raise Exception(f"SMTP Auth Failed - Check your app password. Error: {str(e)}")
+        except smtplib.SMTPException as e:
+            raise Exception(f"SMTP Error: {str(e)}")
+        except Exception as e:
+            raise Exception(f"Connection error: {str(e)}")
     
     async def send_batch(
         self,

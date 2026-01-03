@@ -35,12 +35,12 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
-    print("🚀 Starting Internship Automation Bot...")
-    print(f"📁 Frontend directory: {FRONTEND_DIR}")
-    print(f"🔗 Supabase connected: {db.is_connected}")
+    print("[*] Starting Internship Automation Bot...")
+    print(f"[*] Frontend directory: {FRONTEND_DIR}")
+    print(f"[*] Supabase connected: {db.is_connected}")
     yield
     # Shutdown
-    print("👋 Shutting down...")
+    print("[*] Shutting down...")
     if orchestrator.is_running:
         await orchestrator.stop("Server shutdown")
 
@@ -255,11 +255,11 @@ if __name__ == "__main__":
     import uvicorn
     
     print("\n" + "="*60)
-    print("🤖 INTERNSHIP AUTOMATION BOT")
+    print("INTERNSHIP AUTOMATION BOT")
     print("="*60)
-    print(f"📍 Server: http://localhost:8000")
-    print(f"📊 API Docs: http://localhost:8000/docs")
-    print(f"🔌 WebSocket: ws://localhost:8000/ws")
+    print(f"Server: http://localhost:8000")
+    print(f"API Docs: http://localhost:8000/docs")
+    print(f"WebSocket: ws://localhost:8000/ws")
     print("="*60 + "\n")
     
     uvicorn.run(

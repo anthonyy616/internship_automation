@@ -108,7 +108,7 @@ def load_config() -> Settings:
     # Extract search criteria
     search_data = config_data.get('search_criteria', {})
     search_criteria = SearchCriteria(
-        keywords=search_data.get('keywords', ['Software Engineer Intern']),
+        keywords=search_data.get('keywords', ['Software Engineer Intern', 'Computer Engineer Intern', 'AI Engineer', 'Backend Engineer', 'Data Engineer Intern', 'Computer Science Intern']),
         locations=search_data.get('locations', ['Remote'])
     )
     
