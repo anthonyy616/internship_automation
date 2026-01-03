@@ -1,4 +1,6 @@
-# 🚀 Internship Automation Bot
+# Internship Automation Bot 
+
+Note: This project is intended to be completely ethical. 
 
 An AI-powered autonomous agent system that automates the internship application process across multiple regions. The bot discovers opportunities, submits applications, and sends personalized cold emails — all while you focus on preparing for interviews.
 
@@ -204,9 +206,6 @@ internship-automation-bot/
 
 ---
 
-## 🤝 Contributing
-
-Contributions are welcome! Please read our contributing guidelines before submitting a PR.
 
 ---
 
@@ -216,11 +215,11 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-## 👨‍💻 Author
+##  Author
 
-**Anthony Ogbuah**  
-Computer Science Junior | AI & Systems Engineering
+**Anthony Ogbuah** {LINK: https://anthonyy616.vercel.app} 
+Computer Engineering (Major) Junior | AI Engineer
 
 ---
 
-*Built with ❤️ to automate the tedious parts of job hunting*
+*Built with ❤️ to automate the stressful parts of job hunting*
