@@ -24,7 +24,7 @@ An AI-powered autonomous agent system that automates the internship application 
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
@@ -55,7 +55,7 @@ An AI-powered autonomous agent system that automates the internship application 
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 
@@ -114,17 +114,6 @@ playwright install chromium
      # ... etc
    ```
 
-4. **Add your resume to `data/resume.pdf`**
-
-### Run the Application
-
-```bash
-# Start the backend server
-python -m backend.app
-
-# Open http://localhost:8000 in your browser
-```
-
 ---
 
 ## 📊 Dashboard Preview
@@ -137,7 +126,7 @@ The web dashboard provides:
 
 ---
 
-## 🌍 Supported Job Boards
+## Supported Job Boards
 
 | Region | Platforms |
 |--------|-----------|
@@ -150,7 +139,7 @@ Plus **Google Jobs** integration for all regions!
 
 ---
 
-## 🤖 AI Agents
+## AI Agents
 
 The system uses 5 specialized CrewAI agents:
 
@@ -214,4 +203,4 @@ Computer Engineering (Major) Junior | AI Engineer
 
 ---
 
-*Built with ❤️ to automate the stressful parts of job hunting*
+*Built to automate the stressful parts of job hunting*
