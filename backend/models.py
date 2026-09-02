@@ -1,5 +1,5 @@
 """
-Pydantic models for API requests and responses.
+Pydantic models for API requests/responses and database rows.
 """
 
 from datetime import datetime
@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 from enum import Enum
 
 
-# ==================== ENUMS ====================
+# =============================================================================
+# ENUMS
+# =============================================================================
 
 class Region(str, Enum):
     EU = "EU"
@@ -18,28 +20,55 @@ class Region(str, Enum):
 
 
 class JobStatus(str, Enum):
-    FOUND = "found"
+    DISCOVERED = "discovered"
+    FILTERED = "filtered"
+    QUEUED = "queued"
     APPLIED = "applied"
     EMAILED = "emailed"
-    REJECTED = "rejected"
-    INTERVIEW = "interview"
-    OFFER = "offer"
-
-
-class ApplicationMethod(str, Enum):
-    FORM_FILL = "form_fill"
-    QUICK_APPLY = "quick_apply"
-    EMAIL_ONLY = "email_only"
-    MANUAL = "manual"
-
-
-class EmailStatus(str, Enum):
-    PENDING = "pending"
-    SENT = "sent"
     FAILED = "failed"
-    BOUNCED = "bounced"
-    OPENED = "opened"
-    REPLIED = "replied"
+    FAILED_NEEDS_MANUAL = "failed_needs_manual"
+
+
+class ApplicationStatus(str, Enum):
+    QUEUED = "queued"
+    FILLING = "filling"
+    PAUSED_AWAITING_INPUT = "paused_awaiting_input"
+    APPLIED = "applied"
+    FAILED = "failed"
+
+
+class EventStatus(str, Enum):
+    STARTED = "started"
+    SUCCESS = "success"
+    FAILED = "failed"
+    ESCALATED = "escalated"
+
+
+class EventStage(str, Enum):
+    SCRAPE = "scrape"
+    FILTER = "filter"
+    APPLY = "apply"
+    EMAIL = "email"
+    SYSTEM = "system"
+
+
+class AnswerCategory(str, Enum):
+    A = "A"  # Fact only user can supply (visa, salary, etc.)
+    B = "B"  # Generatable from resume + posting
+
+
+class ConfirmationStatus(str, Enum):
+    PENDING = "pending"
+    ANSWERED = "answered"
+    TIMED_OUT = "timed_out"
+
+
+class BotStatus(str, Enum):
+    IDLE = "idle"
+    RUNNING = "running"
+    PAUSED = "paused"
+    STOPPED = "stopped"
+    ERROR = "error"
 
 
 class LogLevel(str, Enum):
@@ -53,25 +82,111 @@ class LogLevel(str, Enum):
 class LogAction(str, Enum):
     SEARCH = "SEARCH"
     SCRAPE = "SCRAPE"
-    VALIDATE = "VALIDATE"
+    FILTER = "FILTER"
     APPLY = "APPLY"
     EMAIL = "EMAIL"
-    ERROR = "ERROR"
     SYSTEM = "SYSTEM"
+    ERROR = "ERROR"
 
 
-class BotStatus(str, Enum):
-    IDLE = "idle"
-    RUNNING = "running"
-    PAUSED = "paused"
-    STOPPED = "stopped"
-    ERROR = "error"
+# =============================================================================
+# DATABASE ROW MODELS
+# =============================================================================
+
+class Job(BaseModel):
+    id: str
+    source: str
+    external_id: Optional[str] = None
+    title: str
+    company: str
+    region: str
+    url: str
+    description: Optional[str] = None
+    status: str = "discovered"
+    discovered_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-# ==================== REQUEST MODELS ====================
+class Application(BaseModel):
+    id: str
+    job_id: str
+    status: str = "queued"
+    applied_via: Optional[str] = None
+    ats_platform: Optional[str] = None
+    resume_version: Optional[str] = None
+    filled_fields: Dict[str, Any] = {}
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AgentEvent(BaseModel):
+    id: str
+    application_id: Optional[str] = None
+    stage: str
+    action: str
+    target_url: Optional[str] = None
+    status: str
+    screenshot_url: Optional[str] = None
+    duration_ms: Optional[int] = None
+    error_text: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProfileAnswer(BaseModel):
+    id: str
+    question_text: str
+    answer_text: str
+    category: str = "B"
+    times_used: int = 0
+    last_used_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PendingConfirmation(BaseModel):
+    id: str
+    application_id: str
+    question_text: str
+    field_type: Optional[str] = None
+    options: Optional[List[str]] = None
+    status: str = "pending"
+    telegram_message_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    answered_at: Optional[datetime] = None
+
+
+class EmailRecord(BaseModel):
+    id: str
+    application_id: Optional[str] = None
+    to_address: str
+    subject: str
+    body: str
+    self_check_status: Optional[str] = None
+    self_check_notes: Optional[str] = None
+    sent_at: Optional[datetime] = None
+    bounced_at: Optional[datetime] = None
+    replied_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Source(BaseModel):
+    id: str
+    name: str
+    type: str  # 'api' or 'scrape'
+    enabled: bool = True
+    base_url: Optional[str] = None
+    last_success_at: Optional[datetime] = None
+    last_error_at: Optional[datetime] = None
+    error_count: int = 0
+    consecutive_failures: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# =============================================================================
+# API REQUEST MODELS
+# =============================================================================
 
 class StartBotRequest(BaseModel):
-    """Request to start the bot."""
     regions: List[Region] = Field(..., description="Regions to search in")
     contact_email: str = Field(..., description="Email for companies to contact you")
     portfolio_url: Optional[str] = Field(None, description="Portfolio website URL")
@@ -82,106 +197,96 @@ class StartBotRequest(BaseModel):
 
 
 class StopBotRequest(BaseModel):
-    """Request to stop the bot."""
     reason: Optional[str] = Field(None, description="Reason for stopping")
 
 
-# ==================== RESPONSE MODELS ====================
+class ConfigUpdateRequest(BaseModel):
+    key: str
+    value: Dict[str, Any]
+
+
+class AnswerQuestionRequest(BaseModel):
+    confirmation_id: str
+    answer: str
+
+
+# =============================================================================
+# API RESPONSE MODELS
+# =============================================================================
 
 class JobResponse(BaseModel):
-    """Job data response."""
     id: str
     company: str
     title: str
     url: str
-    region: Region
+    region: str
     source: Optional[str] = None
-    contact_email: Optional[str] = None
-    hiring_manager: Optional[str] = None
     description: Optional[str] = None
-    eligibility_verified: bool = False
-    status: JobStatus = JobStatus.FOUND
+    status: str = "discovered"
     created_at: datetime
-    updated_at: datetime
 
 
 class ApplicationResponse(BaseModel):
-    """Application data response."""
     id: str
     job_id: str
-    applied_at: datetime
-    method: ApplicationMethod
     status: str
-    notes: Optional[str] = None
-
-
-class EmailResponse(BaseModel):
-    """Email data response."""
-    id: str
-    job_id: str
-    recipient_email: str
-    subject: str
-    body: str
-    sent_at: Optional[datetime] = None
-    status: EmailStatus
-
-
-class LogEntry(BaseModel):
-    """Activity log entry."""
-    id: Optional[str] = None
-    timestamp: datetime
-    level: LogLevel
-    action: LogAction
-    message: str
-    region: Optional[str] = None
-    metadata: Dict[str, Any] = {}
+    applied_via: Optional[str] = None
+    ats_platform: Optional[str] = None
+    created_at: datetime
 
 
 class StatsResponse(BaseModel):
-    """Statistics response."""
     total_jobs: int = 0
     total_applications: int = 0
     total_emails: int = 0
     jobs_by_region: Dict[str, int] = {}
     jobs_by_status: Dict[str, int] = {}
     session_active: bool = False
-    current_status: BotStatus = BotStatus.IDLE
+    current_status: str = "idle"
 
 
 class BotStatusResponse(BaseModel):
-    """Bot status response."""
-    status: BotStatus
+    status: str
     session_id: Optional[str] = None
-    started_at: Optional[datetime] = None
-    regions: List[str] = []
     jobs_found: int = 0
     applications_sent: int = 0
     emails_sent: int = 0
-    current_action: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
-    """Health check response."""
     status: str = "healthy"
-    timestamp: datetime
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
     database_connected: bool
-    version: str = "1.0.0"
+    version: str = "2.0.0"
 
 
-# ==================== INTERNAL MODELS ====================
+# =============================================================================
+# INTERNAL MODELS (used by services, not stored directly)
+# =============================================================================
 
 class ScrapedJob(BaseModel):
-    """Job data scraped from a website."""
-    company: str
-    title: str
-    url: str
-    region: str
+    """Job data from a source adapter."""
     source: str
-    description: Optional[str] = None
+    external_id: Optional[str] = None
+    title: str
+    company: str
+    url: str
+    region: str = ""
+    description: str = ""
+    location: str = ""
     contact_email: Optional[str] = None
     hiring_manager: Optional[str] = None
-    apply_url: Optional[str] = None
-    requirements: Optional[List[str]] = None
+    tags: List[str] = []
+
+
+class ApplyResult(BaseModel):
+    """Result of an application attempt."""
+    success: bool
+    screenshot_path: Optional[str] = None
+    error: Optional[str] = None
+    filled_fields: Dict[str, Any] = {}
+    needs_input: bool = False
+    input_field: Optional[str] = None
 
 
 class EmailContent(BaseModel):
@@ -189,7 +294,7 @@ class EmailContent(BaseModel):
     subject: str
     body: str
     recipient: str
-    job_id: str
+    job_id: str = ""
 
 
 class SessionConfig(BaseModel):
@@ -206,3 +311,10 @@ class SessionConfig(BaseModel):
     user_year: str
     user_skills: List[str]
     user_university: str
+
+
+class SelfCheckResult(BaseModel):
+    """Result of email self-check."""
+    passed: bool
+    issues: List[str] = []
+    confidence: float = 0.0

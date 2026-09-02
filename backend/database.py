@@ -1,530 +1,552 @@
 """
-Supabase database client for the Internship Automation Bot.
-Handles all database operations for jobs, applications, emails, and logs.
+Database service for Neon (PostgreSQL + pgvector).
+Provides asyncpg connection pool and typed Repository methods.
 """
 
 import os
+import json
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from supabase import create_client, Client
+
+import asyncpg
 from dotenv import load_dotenv
+
+from backend.models import (
+    Job, Application, AgentEvent, ProfileAnswer,
+    PendingConfirmation, EmailRecord, Source,
+)
 
 load_dotenv()
 
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL', '')
-SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')
-
-_supabase_client: Optional[Client] = None
+NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL", "")
 
 
-def get_supabase() -> Optional[Client]:
-    """Get or create Supabase client instance."""
-    global _supabase_client
-    
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        print("Warning: Supabase credentials not configured. Using local-only mode.")
-        return None
-    
-    if _supabase_client is None:
-        _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    
-    return _supabase_client
+class Repository:
+    """Typed database repository with asyncpg."""
 
+    def __init__(self, pool: asyncpg.Pool):
+        self.pool = pool
 
-class DatabaseService:
-    """Database service for all CRUD operations."""
-    
-    def __init__(self):
-        self.client = get_supabase()
-    
-    @property
-    def is_connected(self) -> bool:
-        """Check if database is connected."""
-        return self.client is not None
-    
-    # ==================== JOBS ====================
-    
-    async def create_job(self, job_data: Dict[str, Any]) -> Optional[Dict]:
-        """Create a new job entry."""
-        if not self.client:
-            return None
-        
-        try:
-            result = self.client.table('jobs').insert(job_data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error creating job: {e}")
-            return None
-    
-    async def get_jobs(self, region: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> List[Dict]:
-        """Get jobs with optional filters."""
-        if not self.client:
-            return []
-        
-        try:
-            query = self.client.table('jobs').select('*')
-            
-            if region:
-                query = query.eq('region', region)
-            if status:
-                query = query.eq('status', status)
-            
-            result = query.order('created_at', desc=True).limit(limit).execute()
-            return result.data or []
-        except Exception as e:
-            print(f"Error fetching jobs: {e}")
-            return []
-    
-    async def update_job_status(self, job_id: str, status: str) -> bool:
-        """Update job status."""
-        if not self.client:
-            return False
-        
-        try:
-            self.client.table('jobs').update({
-                'status': status,
-                'updated_at': datetime.utcnow().isoformat()
-            }).eq('id', job_id).execute()
-            return True
-        except Exception as e:
-            print(f"Error updating job: {e}")
-            return False
-    
-    async def job_exists(self, url: str) -> bool:
-        """Check if a job with the given URL already exists."""
-        if not self.client:
-            return False
-        
-        try:
-            result = self.client.table('jobs').select('id').eq('url', url).execute()
-            return len(result.data) > 0 if result.data else False
-        except Exception as e:
-            print(f"Error checking job exists: {e}")
-            return False
-    
-    # ==================== APPLICATIONS ====================
-    
-    async def create_application(self, app_data: Dict[str, Any]) -> Optional[Dict]:
-        """Create a new application entry."""
-        if not self.client:
-            return None
-        
-        try:
-            result = self.client.table('applications').insert(app_data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error creating application: {e}")
-            return None
-    
-    async def get_applications(self, job_id: Optional[str] = None, limit: int = 100) -> List[Dict]:
-        """Get applications with optional job_id filter."""
-        if not self.client:
-            return []
-        
-        try:
-            query = self.client.table('applications').select('*')
-            
-            if job_id:
-                query = query.eq('job_id', job_id)
-            
-            result = query.order('applied_at', desc=True).limit(limit).execute()
-            return result.data or []
-        except Exception as e:
-            print(f"Error fetching applications: {e}")
-            return []
-    
-    # ==================== EMAILS ====================
-    
-    async def create_email(self, email_data: Dict[str, Any]) -> Optional[Dict]:
-        """Create a new email entry."""
-        if not self.client:
-            return None
-        
-        try:
-            result = self.client.table('emails').insert(email_data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error creating email: {e}")
-            return None
-    
-    async def update_email_status(self, email_id: str, status: str, error_message: Optional[str] = None) -> bool:
-        """Update email status after sending attempt."""
-        if not self.client:
-            return False
-        
-        try:
-            update_data = {
-                'status': status,
-                'sent_at': datetime.utcnow().isoformat() if status == 'sent' else None
-            }
-            if error_message:
-                update_data['error_message'] = error_message
-            
-            self.client.table('emails').update(update_data).eq('id', email_id).execute()
-            return True
-        except Exception as e:
-            print(f"Error updating email: {e}")
-            return False
-    
-    async def get_emails(self, job_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> List[Dict]:
-        """Get emails with optional filters."""
-        if not self.client:
-            return []
-        
-        try:
-            query = self.client.table('emails').select('*')
-            
-            if job_id:
-                query = query.eq('job_id', job_id)
-            if status:
-                query = query.eq('status', status)
-            
-            result = query.order('sent_at', desc=True).limit(limit).execute()
-            return result.data or []
-        except Exception as e:
-            print(f"Error fetching emails: {e}")
-            return []
-    
-    # ==================== ACTIVITY LOGS ====================
-    
-    async def log_activity(
+    # =========================================================================
+    # JOBS
+    # =========================================================================
+
+    async def upsert_job(
         self,
-        level: str,
-        action: str,
-        message: str,
+        source: str,
+        external_id: Optional[str],
+        title: str,
+        company: str,
+        region: str,
+        url: str,
+        description: str = "",
+    ) -> Optional[Job]:
+        """Insert a job, skip if URL already exists. Returns the job or None."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO jobs (source, external_id, title, company, region, url, description)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)
+                   ON CONFLICT (url) DO NOTHING
+                   RETURNING *""",
+                source, external_id, title, company, region, url, description,
+            )
+            return Job(**dict(row)) if row else None
+
+    async def get_job(self, job_id: str) -> Optional[Job]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id)
+            return Job(**dict(row)) if row else None
+
+    async def get_jobs(
+        self,
         region: Optional[str] = None,
-        metadata: Optional[Dict] = None
-    ) -> Optional[Dict]:
-        """Log an activity to the database."""
-        if not self.client:
-            return None
-        
-        try:
-            log_data = {
-                'level': level,
-                'action': action,
-                'message': message,
-                'region': region,
-                'metadata': metadata or {},
-                'timestamp': datetime.utcnow().isoformat()
-            }
-            result = self.client.table('activity_logs').insert(log_data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error logging activity: {e}")
-            return None
-    
-    async def get_recent_logs(self, limit: int = 50, region: Optional[str] = None) -> List[Dict]:
-        """Get recent activity logs."""
-        if not self.client:
-            return []
-        
-        try:
-            query = self.client.table('activity_logs').select('*')
-            
+        status: Optional[str] = None,
+        source: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Job]:
+        async with self.pool.acquire() as conn:
+            query = "SELECT * FROM jobs WHERE 1=1"
+            args: list = []
+            idx = 1
+
             if region:
-                query = query.eq('region', region)
-            
-            result = query.order('timestamp', desc=True).limit(limit).execute()
-            return result.data or []
-        except Exception as e:
-            print(f"Error fetching logs: {e}")
-            return []
-    
-    # ==================== SESSIONS ====================
-    
-    async def create_session(self, regions: List[str], config_snapshot: Dict) -> Optional[Dict]:
-        """Create a new bot session."""
-        if not self.client:
-            return None
-        
-        try:
-            session_data = {
-                'regions_targeted': regions,
-                'config_snapshot': config_snapshot,
-                'status': 'running',
-                'jobs_found': 0,
-                'applications_sent': 0,
-                'emails_sent': 0
-            }
-            result = self.client.table('sessions').insert(session_data).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            print(f"Error creating session: {e}")
-            return None
-    
-    async def update_session(self, session_id: str, updates: Dict[str, Any]) -> bool:
-        """Update session statistics."""
-        if not self.client:
-            return False
-        
-        try:
-            self.client.table('sessions').update(updates).eq('id', session_id).execute()
-            return True
-        except Exception as e:
-            print(f"Error updating session: {e}")
-            return False
-    
-    async def end_session(self, session_id: str, status: str = 'completed') -> bool:
-        """End a session."""
-        if not self.client:
-            return False
-        
-        try:
-            self.client.table('sessions').update({
-                'status': status,
-                'ended_at': datetime.utcnow().isoformat()
-            }).eq('id', session_id).execute()
-            return True
-        except Exception as e:
-            print(f"Error ending session: {e}")
-            return False
-    
-    # ==================== STATISTICS ====================
-    
-    async def get_stats(self) -> Dict[str, Any]:
-        """Get overall statistics."""
-        if not self.client:
-            return {
-                'total_jobs': 0,
-                'total_applications': 0,
-                'total_emails': 0,
-                'jobs_by_region': {},
-                'jobs_by_status': {}
-            }
-        
-        try:
-            # Get counts
-            jobs = self.client.table('jobs').select('id, region, status').execute()
-            applications = self.client.table('applications').select('id').execute()
-            emails = self.client.table('emails').select('id, status').execute()
-            
-            jobs_data = jobs.data or []
-            
-            # Calculate stats
-            jobs_by_region = {}
-            jobs_by_status = {}
-            for job in jobs_data:
-                region = job.get('region', 'Unknown')
-                status = job.get('status', 'unknown')
-                jobs_by_region[region] = jobs_by_region.get(region, 0) + 1
-                jobs_by_status[status] = jobs_by_status.get(status, 0) + 1
-            
-            return {
-                'total_jobs': len(jobs_data),
-                'total_applications': len(applications.data or []),
-                'total_emails': len(emails.data or []),
-                'jobs_by_region': jobs_by_region,
-                'jobs_by_status': jobs_by_status
-            }
-        except Exception as e:
-            print(f"Error fetching stats: {e}")
-            return {
-                'total_jobs': 0,
-                'total_applications': 0,
-                'total_emails': 0,
-                'jobs_by_region': {},
-                'jobs_by_status': {}
-            }
+                query += f" AND region = ${idx}"
+                args.append(region)
+                idx += 1
+            if status:
+                query += f" AND status = ${idx}"
+                args.append(status)
+                idx += 1
+            if source:
+                query += f" AND source = ${idx}"
+                args.append(source)
+                idx += 1
 
+            query += " ORDER BY discovered_at DESC"
+            if limit:
+                query += f" LIMIT {limit}"
 
+            rows = await conn.fetch(query, *args)
+            return [Job(**dict(r)) for r in rows]
 
-import json
-from pathlib import Path
-
-# ... (Previous imports)
-
-class JsonDatabaseService:
-    """Offline JSON-based database service."""
-    
-    def __init__(self, db_path: str = "data/local_db.json"):
-        self.db_path = Path(db_path)
-        self.data = {
-            "jobs": [],
-            "applications": [],
-            "emails": [],
-            "activity_logs": [],
-            "sessions": []
-        }
-        self.load()
-        
-    def load(self):
-        if self.db_path.exists():
-            try:
-                with open(self.db_path, 'r', encoding='utf-8') as f:
-                    self.data = json.load(f)
-            except Exception as e:
-                print(f"Error loading local DB: {e}")
-        else:
-            self.save()
-            
-    def save(self):
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.db_path, 'w', encoding='utf-8') as f:
-            json.dump(self.data, f, indent=2, default=str)
-            
-    @property
-    def is_connected(self) -> bool:
-        return True
-        
-    async def create_job(self, job_data: Dict[str, Any]) -> Optional[Dict]:
-        job_data['id'] = str(len(self.data['jobs']) + 1)
-        job_data['created_at'] = datetime.utcnow().isoformat()
-        self.data['jobs'].append(job_data)
-        self.save()
-        return job_data
-        
-    async def get_jobs(self, region: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> List[Dict]:
-        jobs = self.data['jobs']
-        if region:
-            jobs = [j for j in jobs if j.get('region') == region]
-        if status:
-            jobs = [j for j in jobs if j.get('status') == status]
-        return sorted(jobs, key=lambda x: x.get('created_at', ''), reverse=True)[:limit]
-        
     async def update_job_status(self, job_id: str, status: str) -> bool:
-        for job in self.data['jobs']:
-            if str(job.get('id')) == str(job_id):
-                job['status'] = status
-                job['updated_at'] = datetime.utcnow().isoformat()
-                self.save()
-                return True
-        return False
-        
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE jobs SET status = $1, updated_at = NOW() WHERE id = $2",
+                status, job_id,
+            )
+            return result == "UPDATE 1"
+
     async def job_exists(self, url: str) -> bool:
-        return any(j.get('url') == url for j in self.data['jobs'])
-        
-    async def create_application(self, app_data: Dict[str, Any]) -> Optional[Dict]:
-        app_data['id'] = str(len(self.data['applications']) + 1)
-        app_data['applied_at'] = datetime.utcnow().isoformat()
-        self.data['applications'].append(app_data)
-        self.save()
-        return app_data
-        
-    async def get_applications(self, job_id: Optional[str] = None, limit: int = 100) -> List[Dict]:
-        apps = self.data['applications']
-        if job_id:
-            apps = [a for a in apps if str(a.get('job_id')) == str(job_id)]
-        return sorted(apps, key=lambda x: x.get('applied_at', ''), reverse=True)[:limit]
-        
-    async def create_email(self, email_data: Dict[str, Any]) -> Optional[Dict]:
-        email_data['id'] = str(len(self.data['emails']) + 1)
-        self.data['emails'].append(email_data)
-        self.save()
-        return email_data
-        
-    async def update_email_status(self, email_id: str, status: str, error_message: Optional[str] = None) -> bool:
-        for email in self.data['emails']:
-            if str(email.get('id')) == str(email_id):
-                email['status'] = status
-                if status == 'sent':
-                    email['sent_at'] = datetime.utcnow().isoformat()
-                if error_message:
-                    email['error_message'] = error_message
-                self.save()
-                return True
-        return False
-        
-    async def get_emails(self, job_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> List[Dict]:
-        emails = self.data['emails']
-        if job_id:
-            emails = [e for e in emails if str(e.get('job_id')) == str(job_id)]
-        if status:
-            emails = [e for e in emails if e.get('status') == status]
-        return sorted(emails, key=lambda x: x.get('sent_at', ''), reverse=True)[:limit]
-        
-    async def log_activity(self, level: str, action: str, message: str, region: Optional[str] = None, metadata: Optional[Dict] = None) -> Optional[Dict]:
-        log_entry = {
-            'id': str(len(self.data['activity_logs']) + 1),
-            'level': level,
-            'action': action,
-            'message': message,
-            'region': region,
-            'metadata': metadata or {},
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        self.data['activity_logs'].append(log_entry)
-        self.save()
-        return log_entry
-        
-    async def get_recent_logs(self, limit: int = 50, region: Optional[str] = None) -> List[Dict]:
-        logs = self.data['activity_logs']
-        if region:
-            logs = [l for l in logs if l.get('region') == region]
-        return sorted(logs, key=lambda x: x.get('timestamp', ''), reverse=True)[:limit]
-        
-    async def create_session(self, regions: List[str], config_snapshot: Dict) -> Optional[Dict]:
-        session = {
-            'id': str(len(self.data['sessions']) + 1),
-            'regions_targeted': regions,
-            'config_snapshot': config_snapshot,
-            'status': 'running',
-            'jobs_found': 0,
-            'applications_sent': 0,
-            'emails_sent': 0,
-            'created_at': datetime.utcnow().isoformat()
-        }
-        self.data['sessions'].append(session)
-        self.save()
-        return session
-        
-    async def update_session(self, session_id: str, updates: Dict[str, Any]) -> bool:
-        for session in self.data['sessions']:
-            if str(session.get('id')) == str(session_id):
-                session.update(updates)
-                self.save()
-                return True
-        return False
-        
-    async def end_session(self, session_id: str, status: str = 'completed') -> bool:
-        for session in self.data['sessions']:
-            if str(session.get('id')) == str(session_id):
-                session['status'] = status
-                session['ended_at'] = datetime.utcnow().isoformat()
-                self.save()
-                return True
-        return False
-        
-    async def get_stats(self) -> Dict[str, Any]:
-        jobs = self.data['jobs']
-        jobs_by_region = {}
-        jobs_by_status = {}
-        for job in jobs:
-            r = job.get('region', 'Unknown')
-            s = job.get('status', 'unknown')
-            jobs_by_region[r] = jobs_by_region.get(r, 0) + 1
-            jobs_by_status[s] = jobs_by_status.get(s, 0) + 1
-            
-        return {
-            'total_jobs': len(jobs),
-            'total_applications': len(self.data['applications']),
-            'total_emails': len(self.data['emails']),
-            'jobs_by_region': jobs_by_region,
-            'jobs_by_status': jobs_by_status
-        }
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT EXISTS(SELECT 1 FROM jobs WHERE url = $1)", url)
 
-# Initializer to choose the right DB
-def get_database_service():
-    """Returns Supabase service if available, otherwise Json fallback."""
-    
-    # Try Supabase if credentials exist
-    if SUPABASE_URL and SUPABASE_KEY:
-        try:
-            print("[*] Testing Supabase connectivity...")
-            svc = DatabaseService()
-            # Force a simple query to check connection
-            # Using a very short timeout if possible, or just catching the error
-            svc.client.table('jobs').select('id').limit(1).execute() 
-            print("[+] Supabase connected successfully.")
-            return svc
-        except Exception as e:
-            print(f"[-] Supabase connection failed: {e}")
-            print("[-] Falling back to local JSON database.")
-    else:
-        print("[-] No Supabase credentials found. Using local JSON database.")
+    async def get_job_counts(self) -> Dict[str, Any]:
+        """Get job counts by region and status."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT region, status, COUNT(*) as cnt FROM jobs GROUP BY region, status")
+            by_region: Dict[str, int] = {}
+            by_status: Dict[str, int] = {}
+            for row in rows:
+                by_region[row["region"]] = by_region.get(row["region"], 0) + row["cnt"]
+                by_status[row["status"]] = by_status.get(row["status"], 0) + row["cnt"]
+            total = sum(by_status.values())
+            return {
+                "total_jobs": total,
+                "jobs_by_region": by_region,
+                "jobs_by_status": by_status,
+            }
 
-    return JsonDatabaseService()
+    # =========================================================================
+    # APPLICATIONS
+    # =========================================================================
 
-# Global database service instance
-db = get_database_service()
+    async def create_application(
+        self,
+        job_id: str,
+        applied_via: Optional[str] = None,
+        ats_platform: Optional[str] = None,
+    ) -> Optional[Application]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO applications (job_id, applied_via, ats_platform)
+                   VALUES ($1, $2, $3) RETURNING *""",
+                job_id, applied_via, ats_platform,
+            )
+            return Application(**dict(row)) if row else None
+
+    async def get_application(self, application_id: str) -> Optional[Application]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM applications WHERE id = $1", application_id)
+            return Application(**dict(row)) if row else None
+
+    async def update_application_status(self, application_id: str, status: str) -> bool:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE applications SET status = $1, updated_at = NOW() WHERE id = $2",
+                status, application_id,
+            )
+            return result == "UPDATE 1"
+
+    async def save_filled_fields(self, application_id: str, fields: Dict[str, Any]) -> bool:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE applications SET filled_fields = $1, updated_at = NOW() WHERE id = $2",
+                json.dumps(fields), application_id,
+            )
+            return result == "UPDATE 1"
+
+    async def get_applications(
+        self,
+        job_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Application]:
+        async with self.pool.acquire() as conn:
+            query = "SELECT * FROM applications WHERE 1=1"
+            args: list = []
+            idx = 1
+
+            if job_id:
+                query += f" AND job_id = ${idx}"
+                args.append(job_id)
+                idx += 1
+            if status:
+                query += f" AND status = ${idx}"
+                args.append(status)
+                idx += 1
+
+            query += " ORDER BY created_at DESC"
+            if limit:
+                query += f" LIMIT {limit}"
+
+            rows = await conn.fetch(query, *args)
+            return [Application(**dict(r)) for r in rows]
+
+    # =========================================================================
+    # AGENT EVENTS
+    # =========================================================================
+
+    async def log_event(
+        self,
+        stage: str,
+        action: str,
+        status: str,
+        application_id: Optional[str] = None,
+        target_url: Optional[str] = None,
+        screenshot_url: Optional[str] = None,
+        duration_ms: Optional[int] = None,
+        error_text: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[AgentEvent]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO agent_events
+                   (application_id, stage, action, target_url, status,
+                    screenshot_url, duration_ms, error_text, metadata)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                   RETURNING *""",
+                application_id, stage, action, target_url, status,
+                screenshot_url, duration_ms, error_text,
+                json.dumps(metadata or {}),
+            )
+            return AgentEvent(**dict(row)) if row else None
+
+    async def get_events(
+        self,
+        application_id: Optional[str] = None,
+        stage: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[AgentEvent]:
+        async with self.pool.acquire() as conn:
+            query = "SELECT * FROM agent_events WHERE 1=1"
+            args: list = []
+            idx = 1
+
+            if application_id:
+                query += f" AND application_id = ${idx}"
+                args.append(application_id)
+                idx += 1
+            if stage:
+                query += f" AND stage = ${idx}"
+                args.append(stage)
+                idx += 1
+
+            query += " ORDER BY created_at DESC"
+            if limit:
+                query += f" LIMIT {limit}"
+
+            rows = await conn.fetch(query, *args)
+            return [AgentEvent(**dict(r)) for r in rows]
+
+    async def get_application_timeline(self, application_id: str) -> List[AgentEvent]:
+        """Get all events for a single application, in chronological order."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM agent_events WHERE application_id = $1 ORDER BY created_at ASC",
+                application_id,
+            )
+            return [AgentEvent(**dict(r)) for r in rows]
+
+    # =========================================================================
+    # PROFILE ANSWERS
+    # =========================================================================
+
+    async def get_answer_by_key(self, key: str) -> Optional[ProfileAnswer]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM profile_answers WHERE question_text = $1", key
+            )
+            return ProfileAnswer(**dict(row)) if row else None
+
+    async def search_answer_semantic(self, embedding: List[float], threshold: float = 0.90) -> Optional[ProfileAnswer]:
+        """Find the closest profile answer by cosine similarity."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT *, 1 - (question_embedding <=> $1::vector) as similarity
+                   FROM profile_answers
+                   WHERE question_embedding IS NOT NULL
+                   ORDER BY question_embedding <=> $1::vector
+                   LIMIT 1""",
+                str(embedding),
+            )
+            if row and row["similarity"] >= threshold:
+                answer = ProfileAnswer(**dict(row))
+                return answer
+            return None
+
+    async def save_answer(
+        self,
+        question_text: str,
+        answer_text: str,
+        category: str = "B",
+        embedding: Optional[List[float]] = None,
+    ) -> Optional[ProfileAnswer]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO profile_answers (question_text, answer_text, category, question_embedding)
+                   VALUES ($1, $2, $3, $4::vector)
+                   ON CONFLICT (question_text) DO UPDATE
+                   SET answer_text = $2, category = $3, question_embedding = $4::vector
+                   RETURNING *""",
+                question_text, answer_text, category, str(embedding) if embedding else None,
+            )
+            return ProfileAnswer(**dict(row)) if row else None
+
+    async def increment_answer_usage(self, answer_id: str) -> bool:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                """UPDATE profile_answers
+                   SET times_used = times_used + 1, last_used_at = NOW()
+                   WHERE id = $1""",
+                answer_id,
+            )
+            return result == "UPDATE 1"
+
+    async def get_all_answers(self, category: Optional[str] = None) -> List[ProfileAnswer]:
+        async with self.pool.acquire() as conn:
+            if category:
+                rows = await conn.fetch(
+                    "SELECT * FROM profile_answers WHERE category = $1 ORDER BY times_used DESC", category
+                )
+            else:
+                rows = await conn.fetch("SELECT * FROM profile_answers ORDER BY times_used DESC")
+            return [ProfileAnswer(**dict(r)) for r in rows]
+
+    # =========================================================================
+    # PENDING CONFIRMATIONS
+    # =========================================================================
+
+    async def create_confirmation(
+        self,
+        application_id: str,
+        question_text: str,
+        field_type: Optional[str] = None,
+        options: Optional[List[str]] = None,
+        telegram_message_id: Optional[str] = None,
+    ) -> Optional[PendingConfirmation]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO pending_confirmations
+                   (application_id, question_text, field_type, options, telegram_message_id)
+                   VALUES ($1, $2, $3, $4, $5) RETURNING *""",
+                application_id, question_text, field_type,
+                json.dumps(options) if options else None,
+                telegram_message_id,
+            )
+            return PendingConfirmation(**dict(row)) if row else None
+
+    async def answer_confirmation(self, confirmation_id: str, answer: str) -> bool:
+        """Mark a confirmation as answered and save the answer."""
+        async with self.pool.acquire() as conn:
+            # Get the confirmation to find the question_text
+            conf = await conn.fetchrow(
+                "SELECT * FROM pending_confirmations WHERE id = $1", confirmation_id
+            )
+            if not conf:
+                return False
+
+            # Mark answered
+            await conn.execute(
+                """UPDATE pending_confirmations
+                   SET status = 'answered', answered_at = NOW()
+                   WHERE id = $1""",
+                confirmation_id,
+            )
+
+            # Save answer to profile_answers for future reuse
+            await conn.execute(
+                """INSERT INTO profile_answers (question_text, answer_text, category)
+                   VALUES ($1, $2, 'A')
+                   ON CONFLICT (question_text) DO UPDATE
+                   SET answer_text = $2, times_used = times_used + 1, last_used_at = NOW()""",
+                conf["question_text"], answer,
+            )
+            return True
+
+    async def get_pending_confirmations(self, limit: int = 50) -> List[PendingConfirmation]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT * FROM pending_confirmations
+                   WHERE status = 'pending' ORDER BY created_at DESC LIMIT $1""",
+                limit,
+            )
+            return [PendingConfirmation(**dict(r)) for r in rows]
+
+    # =========================================================================
+    # EMAILS
+    # =========================================================================
+
+    async def create_email(
+        self,
+        application_id: Optional[str],
+        to_address: str,
+        subject: str,
+        body: str,
+    ) -> Optional[EmailRecord]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO emails (application_id, to_address, subject, body)
+                   VALUES ($1, $2, $3, $4) RETURNING *""",
+                application_id, to_address, subject, body,
+            )
+            return EmailRecord(**dict(row)) if row else None
+
+    async def update_email_status(
+        self,
+        email_id: str,
+        self_check_status: Optional[str] = None,
+        sent_at: Optional[datetime] = None,
+        bounced_at: Optional[datetime] = None,
+    ) -> bool:
+        async with self.pool.acquire() as conn:
+            sets = []
+            args: list = []
+            idx = 1
+
+            if self_check_status is not None:
+                sets.append(f"self_check_status = ${idx}")
+                args.append(self_check_status)
+                idx += 1
+            if sent_at is not None:
+                sets.append(f"sent_at = ${idx}")
+                args.append(sent_at)
+                idx += 1
+            if bounced_at is not None:
+                sets.append(f"bounced_at = ${idx}")
+                args.append(bounced_at)
+                idx += 1
+
+            if not sets:
+                return False
+
+            args.append(email_id)
+            result = await conn.execute(
+                f"UPDATE emails SET {', '.join(sets)} WHERE id = ${idx}", *args
+            )
+            return result == "UPDATE 1"
+
+    async def get_email_stats_last_hour(self) -> Dict[str, int]:
+        """Get email send/bounce/fail counts for the last hour (for kill switch)."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT
+                     COUNT(*) as total,
+                     COUNT(*) FILTER (WHERE sent_at IS NOT NULL AND bounced_at IS NULL) as sent,
+                     COUNT(*) FILTER (WHERE bounced_at IS NOT NULL) as bounced,
+                     COUNT(*) FILTER (WHERE self_check_status = 'failed') as failed
+                   FROM emails
+                   WHERE created_at > NOW() - INTERVAL '1 hour'"""
+            )
+            return dict(row) if row else {"total": 0, "sent": 0, "bounced": 0, "failed": 0}
+
+    async def get_domain_send_count(self, domain: str) -> int:
+        """How many emails sent to this domain today."""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(
+                """SELECT COUNT(*) FROM emails
+                   WHERE to_address LIKE $1
+                   AND sent_at IS NOT NULL
+                   AND sent_at > CURRENT_DATE""",
+                f"%@{domain}",
+            )
+
+    # =========================================================================
+    # SOURCES
+    # =========================================================================
+
+    async def get_source(self, name: str) -> Optional[Source]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM sources WHERE name = $1", name)
+            return Source(**dict(row)) if row else None
+
+    async def upsert_source(self, name: str, source_type: str, base_url: str = "") -> Optional[Source]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO sources (name, type, base_url)
+                   VALUES ($1, $2, $3)
+                   ON CONFLICT (name) DO UPDATE SET type = $2, base_url = $3
+                   RETURNING *""",
+                name, source_type, base_url,
+            )
+            return Source(**dict(row)) if row else None
+
+    async def record_source_success(self, source_name: str) -> bool:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                """UPDATE sources
+                   SET last_success_at = NOW(), error_count = 0, consecutive_failures = 0
+                   WHERE name = $1""",
+                source_name,
+            )
+            return result == "UPDATE 1"
+
+    async def record_source_error(self, source_name: str) -> bool:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                """UPDATE sources
+                   SET last_error_at = NOW(), error_count = error_count + 1,
+                       consecutive_failures = consecutive_failures + 1
+                   WHERE name = $1""",
+                source_name,
+            )
+            return result == "UPDATE 1"
+
+    async def get_all_sources(self) -> List[Source]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM sources ORDER BY name")
+            return [Source(**dict(r)) for r in rows]
+
+    async def get_enabled_source_names(self) -> List[str]:
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT name FROM sources WHERE enabled = true ORDER BY name")
+            return [r["name"] for r in rows]
+
+
+# =============================================================================
+# CONNECTION POOL + GLOBAL INSTANCE
+# =============================================================================
+
+_pool: Optional[asyncpg.Pool] = None
+_repo: Optional[Repository] = None
+
+
+async def init_db(dsn: str = None) -> Repository:
+    """Initialize the connection pool and return the repository."""
+    global _pool, _repo
+
+    dsn = dsn or NEON_DATABASE_URL
+    if not dsn:
+        raise RuntimeError("NEON_DATABASE_URL not set. Copy .env.example to .env and fill in your Neon connection string.")
+
+    _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10)
+    _repo = Repository(_pool)
+
+    # Verify connection
+    async with _pool.acquire() as conn:
+        version = await conn.fetchval("SELECT version()")
+        print(f"[+] Connected to: {version[:60]}...")
+
+    return _repo
+
+
+async def close_db():
+    """Close the connection pool."""
+    global _pool
+    if _pool:
+        await _pool.close()
+        print("[+] Database connection pool closed.")
+
+
+def get_repo() -> Repository:
+    """Get the global repository instance. Call init_db() first."""
+    if _repo is None:
+        raise RuntimeError("Database not initialized. Call await init_db() first.")
+    return _repo
+
+
+def get_pool() -> asyncpg.Pool:
+    """Get the global connection pool. Call init_db() first."""
+    if _pool is None:
+        raise RuntimeError("Database not initialized. Call await init_db() first.")
+    return _pool

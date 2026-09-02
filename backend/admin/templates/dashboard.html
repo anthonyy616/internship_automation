@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel — Internship Bot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <div class="max-w-6xl mx-auto p-8">
+        <h1 class="text-3xl font-bold mb-2">🔧 Admin Panel</h1>
+        <p class="text-gray-400 mb-8">Internship Automation Bot v2 — Configuration & Monitoring</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Profile -->
+            <a href="/admin/profile" class="block bg-gray-800 rounded-lg p-6 hover:bg-gray-700 transition">
+                <h2 class="text-xl font-semibold mb-2">👤 Profile</h2>
+                <p class="text-gray-400 text-sm">Edit your profile, resume, skills, and portfolio</p>
+            </a>
+
+            <!-- Sources -->
+            <a href="/admin/sources" class="block bg-gray-800 rounded-lg p-6 hover:bg-gray-700 transition">
+                <h2 class="text-xl font-semibold mb-2">📡 Sources</h2>
+                <p class="text-gray-400 text-sm">Enable/disable job board adapters, view health</p>
+            </a>
+
+            <!-- Email -->
+            <a href="/admin/email" class="block bg-gray-800 rounded-lg p-6 hover:bg-gray-700 transition">
+                <h2 class="text-xl font-semibold mb-2">📧 Email</h2>
+                <p class="text-gray-400 text-sm">Template editor, daily caps, kill switch settings</p>
+            </a>
+
+            <!-- Applications -->
+            <a href="/admin/applications" class="block bg-gray-800 rounded-lg p-6 hover:bg-gray-700 transition">
+                <h2 class="text-xl font-semibold mb-2">📋 Applications</h2>
+                <p class="text-gray-400 text-sm">View all applications with status and replay view</p>
+            </a>
+
+            <!-- Review Queue -->
+            <a href="/admin/review" class="block bg-gray-800 rounded-lg p-6 hover:bg-gray-700 transition">
+                <h2 class="text-xl font-semibold mb-2">⏳ Review Queue</h2>
+                <p class="text-gray-400 text-sm">Pending confirmations and flagged items</p>
+            </a>
+
+            <!-- Events -->
+            <a href="/admin/events" class="block bg-gray-800 rounded-lg p-6 hover:bg-gray-700 transition">
+                <h2 class="text-xl font-semibold mb-2">📊 Events</h2>
+                <p class="text-gray-400 text-sm">Live event feed and per-application timelines</p>
+            </a>
+        </div>
+
+        <div class="mt-8 text-gray-500 text-sm">
+            <p>Phase 6 will flesh out each section with full CRUD, htmx-powered forms, and real-time updates.</p>
+        </div>
+    </div>
+</body>
+</html>
