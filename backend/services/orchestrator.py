@@ -174,27 +174,41 @@ class BotOrchestrator:
             
             await self.logger.success('SYSTEM', f'Saved {self.jobs_found} new jobs to database')
             
-            # Phase 3: Apply to jobs (simplified - marks as applied)
+            from backend.services.applier_service import applier
+            
+            # Phase 3: Apply to jobs
             await self.logger.info('SYSTEM', 'Phase 3: Processing applications...')
             
-            # Note: Full form-filling automation would require per-site implementations
-            # For now, we mark jobs as "applied" and proceed to email
             for job_data in saved_jobs[:config.max_applications]:
                 if self._stop_requested:
                     break
                 
-                # Mark as applied (in real scenario, would fill forms)
-                await db.update_job_status(job_data['id'], 'applied')
-                self.applications_sent += 1
+                await self.logger.info('APPLY', f"Applying to: {job_data['title']} at {job_data['company']}", job_data['region'])
                 
-                await self.logger.success(
-                    'APPLY',
-                    f"Marked application: {job_data['title']} at {job_data['company']}",
-                    job_data['region']
-                )
+                # Use the ApplierService to fill the form
+                success = await applier.apply_to_job(job_data['url'])
+                
+                if success:
+                    await db.update_job_status(job_data['id'], 'applied')
+                    self.applications_sent += 1
+                    await self.logger.success(
+                        'APPLY',
+                        f"Successfully applied: {job_data['title']}",
+                        job_data['region']
+                    )
+                else:
+                    await db.update_job_status(job_data['id'], 'failed')
+                    await self.logger.error(
+                        'APPLY',
+                        f"Failed to apply: {job_data['title']}",
+                        job_data['region']
+                    )
                 
                 # Small delay
-                await asyncio.sleep(1)
+                await asyncio.sleep(2)
+            
+            # Close browser when done
+            await applier.close_browser()
             
             # Phase 4: Send cold emails
             if not config.dry_run:

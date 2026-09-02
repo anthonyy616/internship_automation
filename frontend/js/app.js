@@ -475,5 +475,67 @@ async function init() {
     console.log('Dashboard initialized');
 }
 
+// ============================================
+// MODAL HANDLING
+// ============================================
+const inputModal = document.getElementById('inputModal');
+const inputQuestion = document.getElementById('inputQuestion');
+const inputKey = document.getElementById('inputKey');
+const inputValue = document.getElementById('inputValue');
+const inputForm = document.getElementById('inputForm');
+const closeModal = document.querySelector('.close-modal');
+
+function showInputModal(data) {
+    inputQuestion.textContent = `The bot needs your help for: "${data.label}"`;
+    inputKey.value = data.key;
+    inputValue.value = '';
+    inputModal.classList.add('active');
+    inputValue.focus();
+}
+
+function closeInputModal() {
+    inputModal.classList.remove('active');
+}
+
+if (closeModal) {
+    closeModal.addEventListener('click', closeInputModal);
+}
+
+if (inputForm) {
+    inputForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const key = inputKey.value;
+        const answer = inputValue.value;
+        const questionLabel = inputQuestion.textContent;
+
+        try {
+            const response = await fetch('/api/submit-answer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key, answer, question_label: questionLabel })
+            });
+
+            if (response.ok) {
+                closeInputModal();
+            } else {
+                alert('Failed to submit answer');
+            }
+        } catch (error) {
+            console.error('Error submitting answer:', error);
+            alert('Error submitting answer');
+        }
+    });
+}
+
+// Add input_request listener to initWebSocket
+const originalInitWebSocket = initWebSocket;
+initWebSocket = function () {
+    originalInitWebSocket();
+    wsClient.on('input_request', (data) => {
+        showInputModal(data);
+    });
+};
+
 // Start the app
 document.addEventListener('DOMContentLoaded', init);

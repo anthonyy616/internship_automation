@@ -329,5 +329,202 @@ class DatabaseService:
             }
 
 
+
+import json
+from pathlib import Path
+
+# ... (Previous imports)
+
+class JsonDatabaseService:
+    """Offline JSON-based database service."""
+    
+    def __init__(self, db_path: str = "data/local_db.json"):
+        self.db_path = Path(db_path)
+        self.data = {
+            "jobs": [],
+            "applications": [],
+            "emails": [],
+            "activity_logs": [],
+            "sessions": []
+        }
+        self.load()
+        
+    def load(self):
+        if self.db_path.exists():
+            try:
+                with open(self.db_path, 'r', encoding='utf-8') as f:
+                    self.data = json.load(f)
+            except Exception as e:
+                print(f"Error loading local DB: {e}")
+        else:
+            self.save()
+            
+    def save(self):
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.db_path, 'w', encoding='utf-8') as f:
+            json.dump(self.data, f, indent=2, default=str)
+            
+    @property
+    def is_connected(self) -> bool:
+        return True
+        
+    async def create_job(self, job_data: Dict[str, Any]) -> Optional[Dict]:
+        job_data['id'] = str(len(self.data['jobs']) + 1)
+        job_data['created_at'] = datetime.utcnow().isoformat()
+        self.data['jobs'].append(job_data)
+        self.save()
+        return job_data
+        
+    async def get_jobs(self, region: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> List[Dict]:
+        jobs = self.data['jobs']
+        if region:
+            jobs = [j for j in jobs if j.get('region') == region]
+        if status:
+            jobs = [j for j in jobs if j.get('status') == status]
+        return sorted(jobs, key=lambda x: x.get('created_at', ''), reverse=True)[:limit]
+        
+    async def update_job_status(self, job_id: str, status: str) -> bool:
+        for job in self.data['jobs']:
+            if str(job.get('id')) == str(job_id):
+                job['status'] = status
+                job['updated_at'] = datetime.utcnow().isoformat()
+                self.save()
+                return True
+        return False
+        
+    async def job_exists(self, url: str) -> bool:
+        return any(j.get('url') == url for j in self.data['jobs'])
+        
+    async def create_application(self, app_data: Dict[str, Any]) -> Optional[Dict]:
+        app_data['id'] = str(len(self.data['applications']) + 1)
+        app_data['applied_at'] = datetime.utcnow().isoformat()
+        self.data['applications'].append(app_data)
+        self.save()
+        return app_data
+        
+    async def get_applications(self, job_id: Optional[str] = None, limit: int = 100) -> List[Dict]:
+        apps = self.data['applications']
+        if job_id:
+            apps = [a for a in apps if str(a.get('job_id')) == str(job_id)]
+        return sorted(apps, key=lambda x: x.get('applied_at', ''), reverse=True)[:limit]
+        
+    async def create_email(self, email_data: Dict[str, Any]) -> Optional[Dict]:
+        email_data['id'] = str(len(self.data['emails']) + 1)
+        self.data['emails'].append(email_data)
+        self.save()
+        return email_data
+        
+    async def update_email_status(self, email_id: str, status: str, error_message: Optional[str] = None) -> bool:
+        for email in self.data['emails']:
+            if str(email.get('id')) == str(email_id):
+                email['status'] = status
+                if status == 'sent':
+                    email['sent_at'] = datetime.utcnow().isoformat()
+                if error_message:
+                    email['error_message'] = error_message
+                self.save()
+                return True
+        return False
+        
+    async def get_emails(self, job_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> List[Dict]:
+        emails = self.data['emails']
+        if job_id:
+            emails = [e for e in emails if str(e.get('job_id')) == str(job_id)]
+        if status:
+            emails = [e for e in emails if e.get('status') == status]
+        return sorted(emails, key=lambda x: x.get('sent_at', ''), reverse=True)[:limit]
+        
+    async def log_activity(self, level: str, action: str, message: str, region: Optional[str] = None, metadata: Optional[Dict] = None) -> Optional[Dict]:
+        log_entry = {
+            'id': str(len(self.data['activity_logs']) + 1),
+            'level': level,
+            'action': action,
+            'message': message,
+            'region': region,
+            'metadata': metadata or {},
+            'timestamp': datetime.utcnow().isoformat()
+        }
+        self.data['activity_logs'].append(log_entry)
+        self.save()
+        return log_entry
+        
+    async def get_recent_logs(self, limit: int = 50, region: Optional[str] = None) -> List[Dict]:
+        logs = self.data['activity_logs']
+        if region:
+            logs = [l for l in logs if l.get('region') == region]
+        return sorted(logs, key=lambda x: x.get('timestamp', ''), reverse=True)[:limit]
+        
+    async def create_session(self, regions: List[str], config_snapshot: Dict) -> Optional[Dict]:
+        session = {
+            'id': str(len(self.data['sessions']) + 1),
+            'regions_targeted': regions,
+            'config_snapshot': config_snapshot,
+            'status': 'running',
+            'jobs_found': 0,
+            'applications_sent': 0,
+            'emails_sent': 0,
+            'created_at': datetime.utcnow().isoformat()
+        }
+        self.data['sessions'].append(session)
+        self.save()
+        return session
+        
+    async def update_session(self, session_id: str, updates: Dict[str, Any]) -> bool:
+        for session in self.data['sessions']:
+            if str(session.get('id')) == str(session_id):
+                session.update(updates)
+                self.save()
+                return True
+        return False
+        
+    async def end_session(self, session_id: str, status: str = 'completed') -> bool:
+        for session in self.data['sessions']:
+            if str(session.get('id')) == str(session_id):
+                session['status'] = status
+                session['ended_at'] = datetime.utcnow().isoformat()
+                self.save()
+                return True
+        return False
+        
+    async def get_stats(self) -> Dict[str, Any]:
+        jobs = self.data['jobs']
+        jobs_by_region = {}
+        jobs_by_status = {}
+        for job in jobs:
+            r = job.get('region', 'Unknown')
+            s = job.get('status', 'unknown')
+            jobs_by_region[r] = jobs_by_region.get(r, 0) + 1
+            jobs_by_status[s] = jobs_by_status.get(s, 0) + 1
+            
+        return {
+            'total_jobs': len(jobs),
+            'total_applications': len(self.data['applications']),
+            'total_emails': len(self.data['emails']),
+            'jobs_by_region': jobs_by_region,
+            'jobs_by_status': jobs_by_status
+        }
+
+# Initializer to choose the right DB
+def get_database_service():
+    """Returns Supabase service if available, otherwise Json fallback."""
+    
+    # Try Supabase if credentials exist
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            print("[*] Testing Supabase connectivity...")
+            svc = DatabaseService()
+            # Force a simple query to check connection
+            # Using a very short timeout if possible, or just catching the error
+            svc.client.table('jobs').select('id').limit(1).execute() 
+            print("[+] Supabase connected successfully.")
+            return svc
+        except Exception as e:
+            print(f"[-] Supabase connection failed: {e}")
+            print("[-] Falling back to local JSON database.")
+    else:
+        print("[-] No Supabase credentials found. Using local JSON database.")
+
+    return JsonDatabaseService()
+
 # Global database service instance
-db = DatabaseService()
+db = get_database_service()

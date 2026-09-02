@@ -72,6 +72,9 @@ class WebSocketClient {
             case 'status':
                 this._emit('status', data);
                 break;
+            case 'input_request':
+                this._emit('input_request', data);
+                break;
             default:
                 console.log('Unknown message type:', type, data);
         }

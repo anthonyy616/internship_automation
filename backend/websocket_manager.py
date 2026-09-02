@@ -95,6 +95,14 @@ class ConnectionManager:
             'details': details
         })
 
+    async def send_input_request(self, key: str, label: str):
+        """Request input from the user."""
+        await self.broadcast({
+            'type': 'input_request',
+            'key': key,
+            'label': label
+        })
+
 
 # Global WebSocket manager instance
 ws_manager = ConnectionManager()

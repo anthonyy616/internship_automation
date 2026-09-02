@@ -1,17 +1,42 @@
-crewai
-openai
-langgraph
-langchain-openai
-playwright
-playwright-stealth
-beautifulsoup4
-pandas
-pyyaml
-python-dotenv
+# ── Core ──────────────────────────────────────────────────────────────────────
 fastapi
 uvicorn[standard]
-supabase
-websockets
-python-multipart
-aiofiles
+python-dotenv
+pydantic
+pyyaml
+
+# ── Database ─────────────────────────────────────────────────────────────────
+asyncpg
+# pgvector  # uncomment when using pgvector features (embeddings)
+
+# ── Task Queue ───────────────────────────────────────────────────────────────
+arq
+
+# ── LLM ──────────────────────────────────────────────────────────────────────
+openai
+langchain-openai
+langchain-core
+
+# ── Web Scraping / Browser Automation ───────────────────────────────────────
 httpx
+beautifulsoup4
+playwright
+playwright-stealth
+
+# ── Email ────────────────────────────────────────────────────────────────────
+# Uses stdlib smtplib — no extra deps needed
+
+# ── Auth / Security ─────────────────────────────────────────────────────────
+pyotp
+bcrypt
+itsdangerous
+
+# ── Templating (admin panel) ────────────────────────────────────────────────
+jinja2
+
+# ── WebSocket ────────────────────────────────────────────────────────────────
+websockets
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+aiofiles
+python-multipart
