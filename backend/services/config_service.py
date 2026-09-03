@@ -53,6 +53,7 @@ class EmailConfig:
     warmup_day: int = 1
     warmup_increment: int = 5
     kill_switch_bounce_threshold: int = 15
+    allow_domain_guess: bool = False
 
     def __init__(self, data: Dict[str, Any]):
         self.daily_cap = data.get("daily_cap", 50)
@@ -60,6 +61,7 @@ class EmailConfig:
         self.warmup_day = data.get("warmup_day", 1)
         self.warmup_increment = data.get("warmup_increment", 5)
         self.kill_switch_bounce_threshold = data.get("kill_switch_bounce_threshold", 15)
+        self.allow_domain_guess = bool(data.get("allow_domain_guess", False))
 
     @property
     def effective_daily_cap(self) -> int:

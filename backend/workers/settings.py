@@ -40,7 +40,13 @@ async def startup(ctx: dict):
         event_logger=ctx["event_logger"],
     )
 
-    # Phase 5 injects ctx["email_sender"].
+    # Email safety pipeline (Phase 5)
+    from backend.services.email.sender import EmailSender
+    ctx["email_sender"] = EmailSender(
+        config_service=ctx["config_service"],
+        repo=repo,
+        event_logger=ctx["event_logger"],
+    )
 
 
 async def shutdown(ctx: dict):

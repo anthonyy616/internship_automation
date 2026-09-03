@@ -150,7 +150,7 @@ INSERT INTO config (key, value) VALUES
     ('regions', '{"enabled": ["EU", "UK"]}'),
     ('limits', '{"max_applications_per_day": 50, "max_emails_per_day": 50, "min_delay_seconds": 5, "max_delay_seconds": 15}'),
     ('blocklist', '{"companies": [], "domains": []}'),
-    ('email', '{"daily_cap": 50, "per_domain_cap": 3, "warmup_day": 1, "warmup_increment": 5, "kill_switch_bounce_threshold": 15}'),
+    ('email', '{"daily_cap": 50, "per_domain_cap": 3, "warmup_day": 1, "warmup_increment": 5, "kill_switch_bounce_threshold": 15, "allow_domain_guess": false}'),
     ('apply', '{"dry_run": true}'),
     ('sources_config', '{"remotive": true, "arbeitnow": true, "hackernews": true, "jobicy": true, "jobberman": true, "myjobmag": true, "eleman": true, "prospects": true, "milkround": true}')
 ON CONFLICT (key) DO NOTHING;
