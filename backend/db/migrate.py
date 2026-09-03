@@ -149,6 +149,13 @@ async def seed_sources(conn: asyncpg.Connection):
     )
     print(f"[+] Seeded sources_config ({len(value)} sources)")
 
+    # Auto-apply settings (merge to preserve user overrides)
+    await conn.execute(
+        """INSERT INTO config (key, value) VALUES ('apply', '{"dry_run": true}')
+           ON CONFLICT (key) DO NOTHING"""
+    )
+    print("[+] Seeded apply config (dry_run: true)")
+
     source_rows = [
         ("remotive", "api", "https://remotive.com"),
         ("arbeitnow", "api", "https://www.arbeitnow.com"),

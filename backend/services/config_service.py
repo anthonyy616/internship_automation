@@ -158,6 +158,11 @@ class ConfigService:
         data = await self._get("sources_config") or {}
         return data
 
+    async def get_apply_config(self) -> Dict[str, Any]:
+        """Auto-apply settings: {"dry_run": bool}."""
+        data = await self._get("apply") or {}
+        return {"dry_run": data.get("dry_run", True)}
+
     # =========================================================================
     # Update methods
     # =========================================================================

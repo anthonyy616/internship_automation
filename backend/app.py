@@ -371,15 +371,33 @@ async def get_pending_confirmations(limit: int = 50):
 
 @app.post("/api/confirmations/{confirmation_id}/answer")
 async def answer_confirmation(confirmation_id: str, request: Request):
-    """Answer a pending confirmation."""
+    """
+    Answer a pending confirmation (restart-and-refill): the answer is saved
+    to the profile_answers bank and the application is requeued so the
+    worker resumes filling from where it paused.
+    """
     try:
         body = await request.json()
         answer = body.get("answer", "")
         repo = get_repo()
+
+        confirmation = await repo.get_confirmation(confirmation_id)
+        if confirmation is None:
+            return JSONResponse({"error": "Confirmation not found"}, status_code=404)
+
         success = await repo.answer_confirmation(confirmation_id, answer)
-        if success:
-            return {"success": True}
-        return JSONResponse({"error": "Confirmation not found"}, status_code=404)
+        if not success:
+            return JSONResponse({"error": "Could not save answer"}, status_code=500)
+
+        # Requeue the paused application (restart-and-refill)
+        requeued = False
+        if confirmation.application_id:
+            application = await repo.get_application(str(confirmation.application_id))
+            if application and application.job_id:
+                await orchestrator.enqueue_apply(str(application.job_id))
+                requeued = True
+
+        return {"success": True, "application_requeued": requeued}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

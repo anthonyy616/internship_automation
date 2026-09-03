@@ -46,14 +46,19 @@ async def apply_to_job(ctx: dict, job_id: str) -> dict:
         )
         return {"status": "skipped", "reason": "daily_limit"}
 
-    # No duplicate applications for the same job
+    # No duplicate applications — but a paused one is resumable
+    # (restart-and-refill after the user answers a Category-A question)
     existing = await repo.get_application_by_job(job_id)
-    if existing is not None:
+    if existing is not None and existing.status != "paused_awaiting_input":
         return {"status": "skipped", "reason": "already_applied"}
 
-    application = await repo.create_application(job_id)
-    if application is None:
-        return {"status": "failed", "reason": "application_create_failed"}
+    if existing is not None:
+        application = existing
+        await repo.update_application_status(str(application.id), "filling")
+    else:
+        application = await repo.create_application(job_id)
+        if application is None:
+            return {"status": "failed", "reason": "application_create_failed"}
 
     app_id = str(application.id)
     await repo.update_job_status(job_id, "applying")
@@ -79,6 +84,17 @@ async def apply_to_job(ctx: dict, job_id: str) -> dict:
 
     try:
         result = await applier.apply(job, application)
+        if result.needs_input:
+            # Category-A question hit — save progress and pause for the user
+            await repo.save_filled_fields(app_id, dict(result.filled_fields))
+            await repo.update_application_status(app_id, "paused_awaiting_input")
+            await logger.escalated(
+                "apply", "paused_awaiting_input",
+                application_id=app_id,
+                target_url=job.url,
+                error_text=result.error or "Category-A question encountered",
+            )
+            return {"status": "paused", "reason": "awaiting_user_input"}
         if result.success:
             await repo.update_application_status(app_id, "applied")
             await repo.update_job_status(job_id, "applied")
@@ -92,7 +108,7 @@ async def apply_to_job(ctx: dict, job_id: str) -> dict:
             return {"status": "applied"}
         else:
             await repo.update_application_status(app_id, "failed")
-            await repo.update_job_status(job_id, "failed")
+            await repo.update_job_status(job_id, "failed_needs_manual")
             await logger.failed(
                 "apply", "apply_failed",
                 application_id=app_id,
@@ -102,7 +118,7 @@ async def apply_to_job(ctx: dict, job_id: str) -> dict:
             return {"status": "failed", "reason": getattr(result, "error", "")}
     except Exception as e:
         await repo.update_application_status(app_id, "failed")
-        await repo.update_job_status(job_id, "failed")
+        await repo.update_job_status(job_id, "failed_needs_manual")
         await logger.failed(
             "apply", "apply_error",
             application_id=app_id,

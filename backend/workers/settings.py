@@ -32,7 +32,15 @@ async def startup(ctx: dict):
     ctx["registry"] = build_default_registry()
     ctx["event_logger"] = EventLogger(repo, ws_manager)
 
-    # Phase 4 injects ctx["applier"]; Phase 5 injects ctx["email_sender"].
+    # Tiered auto-apply (Phase 4)
+    from backend.services.applier.tiered import TieredApplier
+    ctx["applier"] = TieredApplier(
+        config_service=ctx["config_service"],
+        repo=repo,
+        event_logger=ctx["event_logger"],
+    )
+
+    # Phase 5 injects ctx["email_sender"].
 
 
 async def shutdown(ctx: dict):

@@ -375,6 +375,13 @@ class Repository:
             )
             return PendingConfirmation(**dict(row)) if row else None
 
+    async def get_confirmation(self, confirmation_id: str) -> Optional[PendingConfirmation]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM pending_confirmations WHERE id = $1", confirmation_id
+            )
+            return PendingConfirmation(**dict(row)) if row else None
+
     async def answer_confirmation(self, confirmation_id: str, answer: str) -> bool:
         """Mark a confirmation as answered and save the answer."""
         async with self.pool.acquire() as conn:
