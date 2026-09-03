@@ -260,6 +260,8 @@ class StubApplier:
         r.success = self.success
         r.applied_via = "form"
         r.error = self.error
+        r.needs_input = False
+        r.filled_fields = {}
         return r
 
 
@@ -285,7 +287,8 @@ async def test_apply_worker_failure_transitions():
     result = await apply_to_job(ctx, "job-1")
 
     assert result["status"] == "failed"
-    assert repo.job_statuses["job-1"] == "failed"
+    # Failed applications land in the manual-review queue, not a dead end
+    assert repo.job_statuses["job-1"] == "failed_needs_manual"
     assert repo.app_statuses["app-1"] == "failed"
 
 
