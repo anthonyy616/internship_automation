@@ -22,18 +22,12 @@ data/screenshots/
 data/videos/
 
 
-# Database
+# Database (legacy root-level SQLite dir only; backend/db/ holds the Neon schema)
 
-db/
+/db/
 *.db
 *.sqlite
 *.sqlite3
-
-
-# Schema files (migrations contain secrets in production)
-
-supabase_schema.sql
-backend/db/schema.sql
 
 
 # Python
