@@ -27,6 +27,38 @@ def _row(row) -> dict:
     return {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in dict(row).items()}
 
 
+def _jsonb_encode(value):
+    """asyncpg jsonb encoder — pass already-serialized text through, else dump."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
+
+
+def _jsonb_decode(value):
+    """asyncpg jsonb decoder — parse stored JSON text into Python objects."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return value
+    return value
+
+
+async def _init_connection(conn: asyncpg.Connection):
+    """Per-connection setup: decode jsonb into Python objects.
+
+    asyncpg 0.30+ returns jsonb columns as raw text by default; without
+    this codec every model field typed Dict[str, Any] fails validation.
+    """
+    await conn.set_type_codec(
+        "jsonb",
+        encoder=_jsonb_encode,
+        decoder=_jsonb_decode,
+        schema="pg_catalog",
+        format="text",
+    )
+
+
 class Repository:
     """Typed database repository with asyncpg."""
 
@@ -425,6 +457,34 @@ class Repository:
             )
             return [PendingConfirmation(**_row(r)) for r in rows]
 
+    async def get_unsent_pending_confirmations(self, limit: int = 20) -> List[PendingConfirmation]:
+        """Pending confirmations that have not been sent to Telegram yet."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT * FROM pending_confirmations
+                   WHERE status = 'pending' AND telegram_message_id IS NULL
+                   ORDER BY created_at ASC LIMIT $1""",
+                limit,
+            )
+            return [PendingConfirmation(**_row(r)) for r in rows]
+
+    async def update_confirmation_telegram_id(self, confirmation_id: str, telegram_message_id: str) -> bool:
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE pending_confirmations SET telegram_message_id = $1 WHERE id = $2",
+                telegram_message_id, confirmation_id,
+            )
+            return result == "UPDATE 1"
+
+    async def get_confirmation_by_telegram_message_id(self, message_id: str) -> Optional[PendingConfirmation]:
+        """Find the confirmation a Telegram message (or reply-to) refers to."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM pending_confirmations WHERE telegram_message_id = $1",
+                str(message_id),
+            )
+            return PendingConfirmation(**_row(row)) if row else None
+
     # =========================================================================
     # EMAILS
     # =========================================================================
@@ -571,7 +631,9 @@ async def init_db(dsn: str = None) -> Repository:
     if not dsn:
         raise RuntimeError("NEON_DATABASE_URL not set. Copy .env.example to .env and fill in your Neon connection string.")
 
-    _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10)
+    _pool = await asyncpg.create_pool(
+        dsn, min_size=2, max_size=10, init=_init_connection
+    )
     _repo = Repository(_pool)
 
     # Verify connection

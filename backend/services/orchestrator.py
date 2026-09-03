@@ -123,3 +123,23 @@ class Orchestrator:
 
 # Global instance used by the FastAPI app
 orchestrator = Orchestrator()
+
+
+async def resume_paused_application(job_id: str) -> bool:
+    """
+    Resume an application that was paused on a Category-A question.
+
+    Puts the job back into the 'queued' state so the process_queue cron
+    will pick it up even if Redis is unreachable, then tries to enqueue
+    it immediately. Returns True when an immediate enqueue succeeded.
+    """
+    from backend.database import get_repo
+
+    repo = get_repo()
+    await repo.update_job_status(job_id, "queued")
+    try:
+        await orchestrator.enqueue_apply(job_id)
+        return True
+    except Exception:
+        # Redis down — the cron (process_queue) will drain 'queued' jobs
+        return False

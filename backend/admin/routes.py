@@ -326,10 +326,12 @@ async def review_answer(confirmation_id: str, answer: str = Form(""),
 
     await repo.answer_confirmation(confirmation_id, answer)
 
-    # Restart-and-refill: requeue the paused application
+    # Restart-and-refill: resume the paused application (job -> queued +
+    # immediate enqueue when Redis is reachable; cron is the fallback)
     if confirmation.application_id:
         app = await repo.get_application(str(confirmation.application_id))
         if app and app.job_id:
-            await orchestrator.enqueue_apply(str(app.job_id))
+            from backend.services.orchestrator import resume_paused_application
+            await resume_paused_application(str(app.job_id))
 
     return RedirectResponse("/admin/review", status_code=303)

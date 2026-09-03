@@ -49,10 +49,31 @@ async def lifespan(app: FastAPI):
         print("[-] Some features will be unavailable.")
         repo = None
 
+    # Telegram escalation bot (long-polling task)
+    telegram_task = None
+    try:
+        if repo is not None:
+            from backend.services.telegram.bot import TelegramBot
+            bot = TelegramBot(repo=repo, logger_=EventLogger(repo, ws_manager))
+            if bot.enabled():
+                telegram_task = asyncio.create_task(bot.run())
+                print("[+] Telegram bot polling started.")
+            else:
+                print("[-] Telegram bot disabled (set TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).")
+    except Exception as e:
+        print(f"[-] Telegram bot failed to start: {e}")
+        telegram_task = None
+
     yield
 
     # Shutdown
     print("[*] Shutting down...")
+    if telegram_task is not None:
+        telegram_task.cancel()
+        try:
+            await telegram_task
+        except (asyncio.CancelledError, Exception):
+            pass
     await orchestrator.close()
     await close_db()
 
@@ -394,8 +415,8 @@ async def answer_confirmation(confirmation_id: str, request: Request):
         if confirmation.application_id:
             application = await repo.get_application(str(confirmation.application_id))
             if application and application.job_id:
-                await orchestrator.enqueue_apply(str(application.job_id))
-                requeued = True
+                from backend.services.orchestrator import resume_paused_application
+                requeued = await resume_paused_application(str(application.job_id))
 
         return {"success": True, "application_requeued": requeued}
     except Exception as e:
