@@ -11,7 +11,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True: .env must win over inherited env vars. On this machine a
+# Windows-level REDIS_URL=redis://localhost:6379 exists, and "localhost"
+# hangs past arq's 1s connect timeout (resolves to ::1 first). .env's
+# 127.0.0.1 would otherwise never take effect.
+load_dotenv(override=True)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
@@ -30,7 +34,9 @@ class Settings:
     neon_database_url: str = field(default_factory=lambda: os.getenv("NEON_DATABASE_URL", ""))
 
     # Redis / task queue
-    redis_url: str = field(default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379"))
+    # Note: use 127.0.0.1, not localhost — on Windows, localhost can resolve
+    # to ::1 first and hang the connection past arq's 1s connect timeout.
+    redis_url: str = field(default_factory=lambda: os.getenv("REDIS_URL", "redis://127.0.0.1:6379"))
 
     # Email (SMTP)
     smtp_user: str = field(default_factory=lambda: os.getenv("SMTP_USER", ""))

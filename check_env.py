@@ -26,7 +26,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 def tcp_check(host: str, port: int, timeout: float = 8.0) -> tuple[bool, str]:

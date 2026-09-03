@@ -5,7 +5,15 @@ Provides REST API, WebSocket, and admin panel.
 
 import os
 import asyncio
+import sys
 from datetime import datetime
+
+# Windows: the default ProactorEventLoop has a known race where socket
+# connects (redis-py/arq, httpx) spuriously fail with CancelledError wrapped
+# as "Timeout connecting to server". The Selector loop avoids overlapped I/O
+# entirely. Must be set before any event loop is created.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from pathlib import Path
 from typing import List, Optional
 from contextlib import asynccontextmanager

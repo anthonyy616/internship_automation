@@ -12,13 +12,14 @@ Run the worker standalone with:
     python -m arq backend.workers.settings.WorkerSettings
 """
 
-import os
 import sys
 import subprocess
 from pathlib import Path
 from typing import List, Optional
 
 from arq.connections import RedisSettings, create_pool
+
+from backend.config import settings
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
@@ -27,7 +28,9 @@ class Orchestrator:
     """Enqueue tasks and manage the arq worker subprocess."""
 
     def __init__(self, redis_url: Optional[str] = None):
-        self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379")
+        # Read from backend.config.settings so .env is loaded (a bare os.getenv
+        # returns None -> arq default "localhost", which hangs on Windows ::1).
+        self.redis_url = redis_url or settings.redis_url
         self._pool = None
         self._worker_proc: Optional[subprocess.Popen] = None
 
