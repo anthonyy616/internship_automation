@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin{% endblock %} — Internship Bot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        body { background: #0f172a; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 0.75rem; }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    </style>
+</head>
+<body class="text-slate-200 min-h-screen">
+<div class="flex">
+    {% if admin_logged_in %}
+    <aside class="w-56 shrink-0 bg-slate-900 min-h-screen p-4 border-r border-slate-800">
+        <h1 class="text-lg font-bold text-white mb-6">🤖 Internship Bot</h1>
+        <nav class="space-y-1 text-sm">
+            <a href="/admin" class="block px-3 py-2 rounded hover:bg-slate-800">Dashboard</a>
+            <a href="/admin/profile" class="block px-3 py-2 rounded hover:bg-slate-800">Profile</a>
+            <a href="/admin/profile-answers" class="block px-3 py-2 rounded hover:bg-slate-800">Q&amp;A Bank</a>
+            <a href="/admin/keywords" class="block px-3 py-2 rounded hover:bg-slate-800">Keywords</a>
+            <a href="/admin/regions" class="block px-3 py-2 rounded hover:bg-slate-800">Regions</a>
+            <a href="/admin/sources" class="block px-3 py-2 rounded hover:bg-slate-800">Sources</a>
+            <a href="/admin/blocklist" class="block px-3 py-2 rounded hover:bg-slate-800">Blocklist</a>
+            <a href="/admin/email-config" class="block px-3 py-2 rounded hover:bg-slate-800">Email Settings</a>
+            <a href="/admin/applications" class="block px-3 py-2 rounded hover:bg-slate-800">Applications</a>
+            <a href="/admin/review" class="block px-3 py-2 rounded hover:bg-slate-800">Review Queue</a>
+            <a href="/admin/events" class="block px-3 py-2 rounded hover:bg-slate-800">Event Feed</a>
+        </nav>
+        <form method="post" action="/admin/logout" class="mt-8">
+            <button class="w-full text-left px-3 py-2 rounded text-slate-400 hover:bg-slate-800 hover:text-white">Log out</button>
+        </form>
+    </aside>
+    {% endif %}
+    <main class="flex-1 p-8">
+        {% block content %}{% endblock %}
+    </main>
+</div>
+</body>
+</html>

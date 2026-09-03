@@ -5,6 +5,7 @@ Provides asyncpg connection pool and typed Repository methods.
 
 import os
 import json
+import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
@@ -19,6 +20,11 @@ from backend.models import (
 load_dotenv()
 
 NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL", "")
+
+
+def _row(row) -> dict:
+    """Convert an asyncpg row to a plain dict with UUIDs as strings."""
+    return {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in dict(row).items()}
 
 
 class Repository:
@@ -50,12 +56,12 @@ class Repository:
                    RETURNING *""",
                 source, external_id, title, company, region, url, description,
             )
-            return Job(**dict(row)) if row else None
+            return Job(**_row(row)) if row else None
 
     async def get_job(self, job_id: str) -> Optional[Job]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM jobs WHERE id = $1", job_id)
-            return Job(**dict(row)) if row else None
+            return Job(**_row(row)) if row else None
 
     async def get_jobs(
         self,
@@ -87,7 +93,7 @@ class Repository:
                 query += f" LIMIT {limit}"
 
             rows = await conn.fetch(query, *args)
-            return [Job(**dict(r)) for r in rows]
+            return [Job(**_row(r)) for r in rows]
 
     async def update_job_status(self, job_id: str, status: str) -> bool:
         async with self.pool.acquire() as conn:
@@ -115,7 +121,7 @@ class Repository:
                 "ORDER BY discovered_at ASC LIMIT $2",
                 statuses, limit,
             )
-            return [Job(**dict(r)) for r in rows]
+            return [Job(**_row(r)) for r in rows]
 
     async def get_job_counts(self) -> Dict[str, Any]:
         """Get job counts by region and status."""
@@ -149,12 +155,12 @@ class Repository:
                    VALUES ($1, $2, $3) RETURNING *""",
                 job_id, applied_via, ats_platform,
             )
-            return Application(**dict(row)) if row else None
+            return Application(**_row(row)) if row else None
 
     async def get_application(self, application_id: str) -> Optional[Application]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM applications WHERE id = $1", application_id)
-            return Application(**dict(row)) if row else None
+            return Application(**_row(row)) if row else None
 
     async def update_application_status(self, application_id: str, status: str) -> bool:
         async with self.pool.acquire() as conn:
@@ -179,7 +185,7 @@ class Repository:
                 "SELECT * FROM applications WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1",
                 job_id,
             )
-            return Application(**dict(row)) if row else None
+            return Application(**_row(row)) if row else None
 
     async def get_today_application_count(self) -> int:
         """Applications created today (for daily caps)."""
@@ -220,7 +226,7 @@ class Repository:
                 query += f" LIMIT {limit}"
 
             rows = await conn.fetch(query, *args)
-            return [Application(**dict(r)) for r in rows]
+            return [Application(**_row(r)) for r in rows]
 
     # =========================================================================
     # AGENT EVENTS
@@ -249,7 +255,7 @@ class Repository:
                 screenshot_url, duration_ms, error_text,
                 json.dumps(metadata or {}),
             )
-            return AgentEvent(**dict(row)) if row else None
+            return AgentEvent(**_row(row)) if row else None
 
     async def get_events(
         self,
@@ -276,7 +282,7 @@ class Repository:
                 query += f" LIMIT {limit}"
 
             rows = await conn.fetch(query, *args)
-            return [AgentEvent(**dict(r)) for r in rows]
+            return [AgentEvent(**_row(r)) for r in rows]
 
     async def get_application_timeline(self, application_id: str) -> List[AgentEvent]:
         """Get all events for a single application, in chronological order."""
@@ -285,7 +291,7 @@ class Repository:
                 "SELECT * FROM agent_events WHERE application_id = $1 ORDER BY created_at ASC",
                 application_id,
             )
-            return [AgentEvent(**dict(r)) for r in rows]
+            return [AgentEvent(**_row(r)) for r in rows]
 
     # =========================================================================
     # PROFILE ANSWERS
@@ -296,7 +302,7 @@ class Repository:
             row = await conn.fetchrow(
                 "SELECT * FROM profile_answers WHERE question_text = $1", key
             )
-            return ProfileAnswer(**dict(row)) if row else None
+            return ProfileAnswer(**_row(row)) if row else None
 
     async def search_answer_semantic(self, embedding: List[float], threshold: float = 0.90) -> Optional[ProfileAnswer]:
         """Find the closest profile answer by cosine similarity."""
@@ -310,7 +316,7 @@ class Repository:
                 str(embedding),
             )
             if row and row["similarity"] >= threshold:
-                answer = ProfileAnswer(**dict(row))
+                answer = ProfileAnswer(**_row(row))
                 return answer
             return None
 
@@ -330,7 +336,7 @@ class Repository:
                    RETURNING *""",
                 question_text, answer_text, category, str(embedding) if embedding else None,
             )
-            return ProfileAnswer(**dict(row)) if row else None
+            return ProfileAnswer(**_row(row)) if row else None
 
     async def increment_answer_usage(self, answer_id: str) -> bool:
         async with self.pool.acquire() as conn:
@@ -350,7 +356,7 @@ class Repository:
                 )
             else:
                 rows = await conn.fetch("SELECT * FROM profile_answers ORDER BY times_used DESC")
-            return [ProfileAnswer(**dict(r)) for r in rows]
+            return [ProfileAnswer(**_row(r)) for r in rows]
 
     # =========================================================================
     # PENDING CONFIRMATIONS
@@ -373,14 +379,14 @@ class Repository:
                 json.dumps(options) if options else None,
                 telegram_message_id,
             )
-            return PendingConfirmation(**dict(row)) if row else None
+            return PendingConfirmation(**_row(row)) if row else None
 
     async def get_confirmation(self, confirmation_id: str) -> Optional[PendingConfirmation]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM pending_confirmations WHERE id = $1", confirmation_id
             )
-            return PendingConfirmation(**dict(row)) if row else None
+            return PendingConfirmation(**_row(row)) if row else None
 
     async def answer_confirmation(self, confirmation_id: str, answer: str) -> bool:
         """Mark a confirmation as answered and save the answer."""
@@ -417,7 +423,7 @@ class Repository:
                    WHERE status = 'pending' ORDER BY created_at DESC LIMIT $1""",
                 limit,
             )
-            return [PendingConfirmation(**dict(r)) for r in rows]
+            return [PendingConfirmation(**_row(r)) for r in rows]
 
     # =========================================================================
     # EMAILS
@@ -436,7 +442,7 @@ class Repository:
                    VALUES ($1, $2, $3, $4) RETURNING *""",
                 application_id, to_address, subject, body,
             )
-            return EmailRecord(**dict(row)) if row else None
+            return EmailRecord(**_row(row)) if row else None
 
     async def update_email_status(
         self,
@@ -504,7 +510,7 @@ class Repository:
     async def get_source(self, name: str) -> Optional[Source]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM sources WHERE name = $1", name)
-            return Source(**dict(row)) if row else None
+            return Source(**_row(row)) if row else None
 
     async def upsert_source(self, name: str, source_type: str, base_url: str = "") -> Optional[Source]:
         async with self.pool.acquire() as conn:
@@ -515,7 +521,7 @@ class Repository:
                    RETURNING *""",
                 name, source_type, base_url,
             )
-            return Source(**dict(row)) if row else None
+            return Source(**_row(row)) if row else None
 
     async def record_source_success(self, source_name: str) -> bool:
         async with self.pool.acquire() as conn:
@@ -541,7 +547,7 @@ class Repository:
     async def get_all_sources(self) -> List[Source]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("SELECT * FROM sources ORDER BY name")
-            return [Source(**dict(r)) for r in rows]
+            return [Source(**_row(r)) for r in rows]
 
     async def get_enabled_source_names(self) -> List[str]:
         async with self.pool.acquire() as conn:

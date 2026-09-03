@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+{% block content %}
+<div class="max-w-sm mx-auto mt-24">
+    <div class="card p-8">
+        <h2 class="text-xl font-bold text-white mb-6">Admin Login</h2>
+        {% if error %}<p class="text-rose-400 text-sm mb-4">{{ error }}</p>{% endif %}
+        <form method="post" action="/admin/login" class="space-y-4">
+            <input type="password" name="password" placeholder="Password" required
+                   class="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700 text-white">
+            <button class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 rounded font-semibold text-white">Sign in</button>
+        </form>
+        <p class="text-xs text-slate-500 mt-4">
+            Password is set via <span class="mono">ADMIN_PASSWORD</span> in .env.
+        </p>
+    </div>
+</div>
+{% endblock %}

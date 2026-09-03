@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Applications{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-white mb-6">Applications</h2>
+<div class="mb-4 flex gap-2 text-sm">
+    <a href="/admin/applications" class="px-3 py-1 rounded {{ 'bg-indigo-600' if not status_filter else 'bg-slate-800' }}">All</a>
+    {% for s in ['queued', 'filling', 'paused_awaiting_input', 'applied', 'failed'] %}
+    <a href="/admin/applications?status={{ s }}" class="px-3 py-1 rounded {{ 'bg-indigo-600' if status_filter == s else 'bg-slate-800' }}">{{ s }}</a>
+    {% endfor %}
+</div>
+<div class="card overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="bg-slate-800 text-left text-slate-400">
+            <tr>
+                <th class="px-4 py-2">Job</th>
+                <th class="px-4 py-2">Company</th>
+                <th class="px-4 py-2">Status</th>
+                <th class="px-4 py-2">Via</th>
+                <th class="px-4 py-2">Created</th>
+                <th class="px-4 py-2"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr class="border-t border-slate-800">
+                <td class="px-4 py-2 text-white">{{ row.job.title if row.job else '—' }}</td>
+                <td class="px-4 py-2 text-slate-400">{{ row.job.company if row.job else '—' }}</td>
+                <td class="px-4 py-2">
+                    <span class="px-2 py-0.5 rounded-full text-xs {{ 'bg-emerald-600' if row.app.status == 'applied' else ('bg-amber-600' if row.app.status in ('paused_awaiting_input','queued','filling') else 'bg-rose-600') }}">
+                        {{ row.app.status }}
+                    </span>
+                </td>
+                <td class="px-4 py-2 text-slate-400">{{ row.app.applied_via or '—' }}</td>
+                <td class="px-4 py-2 text-slate-400">{{ row.app.created_at.strftime('%Y-%m-%d %H:%M') if row.app.created_at else '—' }}</td>
+                <td class="px-4 py-2">
+                    <a href="/admin/applications/{{ row.app.id }}" class="text-indigo-400 hover:text-indigo-300">Replay</a>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="px-4 py-6 text-slate-500 text-center">No applications.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

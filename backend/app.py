@@ -404,23 +404,9 @@ async def answer_confirmation(confirmation_id: str, request: Request):
 
 # ==================== ADMIN PANEL ====================
 
-@app.get("/admin")
-async def admin_dashboard(request: Request):
-    """Admin panel dashboard. (Full implementation in Phase 6)"""
-    if templates:
-        return templates.TemplateResponse("dashboard.html", {"request": request})
-    return JSONResponse({
-        "message": "Admin panel — Phase 6 implementation pending",
-        "endpoints": {
-            "dashboard": "/admin",
-            "profile": "/admin/profile",
-            "sources": "/admin/sources",
-            "email": "/admin/email",
-            "applications": "/admin/applications",
-            "review": "/admin/review",
-            "events": "/admin/events",
-        },
-    })
+# Admin panel (auth + full CRUD — Phase 6)
+from backend.admin.routes import router as admin_router
+app.include_router(admin_router)
 
 
 # ==================== WEBSOCKET ====================

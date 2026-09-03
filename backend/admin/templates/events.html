@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Event Feed{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-white mb-6">Live Event Feed</h2>
+<div hx-get="/admin/events" hx-trigger="every 5s" hx-swap="outerHTML" class="card p-5 max-w-4xl">
+    <ul class="text-xs mono space-y-1.5 max-h-[70vh] overflow-y-auto">
+        {% for e in events %}
+        <li class="flex gap-3">
+            <span class="text-slate-600 shrink-0">{{ e.created_at.strftime('%H:%M:%S') if e.created_at else '' }}</span>
+            <span class="shrink-0 {{ 'text-rose-400' if e.status == 'failed' else ('text-amber-400' if e.status == 'escalated' else 'text-emerald-400') }}">{{ e.status }}</span>
+            <span class="text-slate-300">{{ e.stage }}.{{ e.action }}</span>
+            <span class="text-slate-600 truncate">{{ e.target_url or '' }}</span>
+            {% if e.error_text %}<span class="text-rose-400 truncate">{{ e.error_text }}</span>{% endif %}
+        </li>
+        {% else %}
+        <li class="text-slate-500">No events yet.</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}

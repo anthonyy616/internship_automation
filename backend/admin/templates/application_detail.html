@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Application Replay{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-white mb-2">Application Replay</h2>
+<p class="text-sm text-slate-400 mb-6">
+    {{ job.title if job else 'Unknown role' }} @ {{ job.company if job else '—' }} ·
+    status <span class="text-emerald-400">{{ app.status }}</span>
+    {% if job %}<a href="{{ job.url }}" target="_blank" class="text-indigo-400 hover:text-indigo-300 ml-3">Open listing ↗</a>{% endif %}
+</p>
+
+{% if app.filled_fields %}
+<div class="card p-5 mb-6 max-w-3xl">
+    <h3 class="font-semibold text-white mb-2">Filled fields</h3>
+    <div class="grid md:grid-cols-2 gap-2 text-sm">
+        {% for field, value in app.filled_fields.items() %}
+        <div class="truncate"><span class="text-slate-400">{{ field }}:</span> <span class="text-slate-200">{{ value }}</span></div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<div class="card p-5 max-w-3xl">
+    <h3 class="font-semibold text-white mb-3">Timeline</h3>
+    <ol class="relative border-l border-slate-700 ml-3 space-y-4">
+        {% for e in timeline %}
+        <li class="ml-6">
+            <span class="absolute -left-[7px] mt-1 w-3 h-3 rounded-full {{ 'bg-rose-500' if e.status == 'failed' else ('bg-amber-500' if e.status == 'escalated' else 'bg-emerald-500') }}"></span>
+            <p class="text-sm text-white">
+                <span class="text-slate-500 mono text-xs">{{ e.created_at.strftime('%H:%M:%S') if e.created_at else '' }}</span>
+                <span class="font-medium">{{ e.stage }}.{{ e.action }}</span>
+                <span class="text-slate-400 text-xs">{{ e.status }}</span>
+                {% if e.duration_ms %}<span class="text-slate-600 text-xs">{{ e.duration_ms }}ms</span>{% endif %}
+            </p>
+            {% if e.error_text %}<p class="text-xs text-rose-400 mt-1">{{ e.error_text }}</p>{% endif %}
+            {% if e.screenshot_url %}
+            <img src="/{{ e.screenshot_url }}" class="mt-2 rounded border border-slate-700 max-w-full" alt="screenshot">
+            {% endif %}
+        </li>
+        {% else %}
+        <li class="ml-6 text-sm text-slate-500">No events recorded for this application.</li>
+        {% endfor %}
+    </ol>
+</div>
+{% endblock %}

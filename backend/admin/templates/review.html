@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Review Queue{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-white mb-6">Review Queue — Pending Questions</h2>
+<p class="text-sm text-slate-400 mb-6">
+    The bot paused these applications because it hit a question it cannot answer (visa, salary, dates, demographics).
+    Answering saves the response to the Q&amp;A bank and automatically resumes the application.
+</p>
+
+<div class="space-y-4 max-w-3xl">
+    {% for row in rows %}
+    <div class="card p-5">
+        <p class="text-sm text-slate-400 mb-1">
+            {{ row.job.title if row.job else 'Unknown job' }} @ {{ row.job.company if row.job else '—' }}
+            {% if row.job %}<a href="{{ row.job.url }}" target="_blank" class="text-indigo-400 hover:text-indigo-300 ml-2">↗</a>{% endif %}
+        </p>
+        <p class="text-white font-medium mb-3">{{ row.conf.question_text }}</p>
+        <form method="post" action="/admin/review/{{ row.conf.id }}/answer" class="flex gap-3">
+            <input name="answer" required placeholder="Type the answer…"
+                   class="flex-1 px-3 py-2 rounded bg-slate-800 border border-slate-700 text-white">
+            <button class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 rounded font-semibold text-white">Answer &amp; resume</button>
+        </form>
+        {% if row.conf.options %}
+        <div class="flex gap-2 mt-3 flex-wrap">
+            {% for opt in row.conf.options %}
+            <form method="post" action="/admin/review/{{ row.conf.id }}/answer">
+                <input type="hidden" name="answer" value="{{ opt }}">
+                <button class="text-xs px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700">{{ opt }}</button>
+            </form>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% else %}
+    <p class="text-slate-500">Nothing pending. 🎉</p>
+    {% endfor %}
+</div>
+{% endblock %}

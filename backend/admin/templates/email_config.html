@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Email Settings{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-white mb-6">Email Settings</h2>
+<form method="post" action="/admin/email-config" class="card p-6 max-w-2xl space-y-4">
+    <div class="grid md:grid-cols-2 gap-4">
+        <div>
+            <label class="block text-sm text-slate-400 mb-1">Daily cap</label>
+            <input type="number" name="daily_cap" value="{{ email_cfg.daily_cap }}"
+                   class="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700 text-white">
+        </div>
+        <div>
+            <label class="block text-sm text-slate-400 mb-1">Per-domain cap</label>
+            <input type="number" name="per_domain_cap" value="{{ email_cfg.per_domain_cap }}"
+                   class="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700 text-white">
+        </div>
+        <div>
+            <label class="block text-sm text-slate-400 mb-1">Warm-up day</label>
+            <input type="number" name="warmup_day" value="{{ email_cfg.warmup_day }}"
+                   class="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700 text-white">
+        </div>
+        <div>
+            <label class="block text-sm text-slate-400 mb-1">Warm-up increment (emails/day)</label>
+            <input type="number" name="warmup_increment" value="{{ email_cfg.warmup_increment }}"
+                   class="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700 text-white">
+        </div>
+        <div>
+            <label class="block text-sm text-slate-400 mb-1">Kill-switch bounce threshold (%)</label>
+            <input type="number" name="kill_switch_bounce_threshold" value="{{ email_cfg.kill_switch_bounce_threshold }}"
+                   class="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700 text-white">
+        </div>
+    </div>
+    <label class="flex items-center gap-3 text-sm text-slate-300">
+        <input type="checkbox" name="allow_domain_guess" {{ 'checked' if email_cfg.allow_domain_guess else '' }}>
+        Allow domain guessing (careers@/jobs@/hr@/info@) when no contact email is listed
+    </label>
+    <p class="text-xs text-slate-500">
+        Effective cap today: <span class="text-emerald-400">{{ email_cfg.effective_daily_cap }}</span> emails
+        (warm-up day {{ email_cfg.warmup_day }} × {{ email_cfg.warmup_increment }}).
+    </p>
+    <button class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded font-semibold text-white">Save</button>
+</form>
+{% endblock %}
