@@ -20,6 +20,7 @@ from backend.database import init_db, close_db, get_repo
 from backend.websocket_manager import ws_manager
 from backend.services.config_service import ConfigService
 from backend.services.event_logger import EventLogger
+from backend.services.orchestrator import orchestrator
 
 
 # Paths
@@ -52,6 +53,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print("[*] Shutting down...")
+    await orchestrator.close()
     await close_db()
 
 
@@ -132,28 +134,70 @@ async def health_check():
 
 @app.post("/api/start")
 async def start_bot(request: dict):
-    """Start the autonomous bot. (Placeholder — wired in Phase 3)"""
-    # TODO: Wire to arq task queue in Phase 3
-    return {"success": False, "error": "Not yet implemented — Phase 3"}
+    """
+    Start the autonomous bot: spawn the arq worker subprocess and kick off
+    an immediate scrape of all enabled sources.
+    """
+    started = orchestrator.start_worker()
+
+    enqueued = 0
+    try:
+        config = ConfigService()
+        keywords = await config.get_keywords()
+        regions = await config.get_regions()
+        enqueued = await orchestrator.enqueue_scrape_all(keywords, regions)
+    except Exception as e:
+        return {
+            "success": True,
+            "worker_started": started,
+            "scrape_enqueued": 0,
+            "warning": f"Worker started but initial scrape failed: {e}",
+        }
+
+    return {
+        "success": True,
+        "worker_started": started,
+        "already_running": not started,
+        "scrape_tasks_enqueued": enqueued,
+    }
 
 
 @app.post("/api/stop")
 async def stop_bot(request: Optional[dict] = None):
-    """Stop the bot. (Placeholder — wired in Phase 3)"""
-    # TODO: Wire to arq task queue in Phase 3
-    return {"success": False, "error": "Not yet implemented — Phase 3"}
+    """Stop the bot: terminate the arq worker subprocess."""
+    stopped = orchestrator.stop_worker()
+    return {
+        "success": True,
+        "worker_stopped": stopped,
+        "was_running": stopped,
+    }
 
 
 @app.get("/api/status")
 async def get_status():
     """Get current bot status."""
-    return {
-        "status": "idle",
-        "session_id": None,
-        "jobs_found": 0,
-        "applications_sent": 0,
-        "emails_sent": 0,
-    }
+    worker_running = orchestrator.is_worker_running()
+    try:
+        repo = get_repo()
+        job_stats = await repo.get_job_counts()
+        async with repo.pool.acquire() as conn:
+            app_count = await conn.fetchval("SELECT COUNT(*) FROM applications")
+            email_count = await conn.fetchval("SELECT COUNT(*) FROM emails WHERE sent_at IS NOT NULL")
+        return {
+            "status": "running" if worker_running else "idle",
+            "worker_running": worker_running,
+            "jobs_found": job_stats["total_jobs"],
+            "applications_sent": app_count or 0,
+            "emails_sent": email_count or 0,
+        }
+    except Exception:
+        return {
+            "status": "running" if worker_running else "idle",
+            "worker_running": worker_running,
+            "jobs_found": 0,
+            "applications_sent": 0,
+            "emails_sent": 0,
+        }
 
 
 # ==================== DATA ENDPOINTS ====================

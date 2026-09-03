@@ -101,6 +101,22 @@ class Repository:
         async with self.pool.acquire() as conn:
             return await conn.fetchval("SELECT EXISTS(SELECT 1 FROM jobs WHERE url = $1)", url)
 
+    async def get_job_urls(self) -> List[str]:
+        """All known job URLs (for dedup during scraping)."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT url FROM jobs")
+            return [r["url"] for r in rows]
+
+    async def get_jobs_by_status(self, statuses: List[str], limit: int = 50) -> List[Job]:
+        """Get jobs in one of the given states, oldest first."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM jobs WHERE status = ANY($1::text[]) "
+                "ORDER BY discovered_at ASC LIMIT $2",
+                statuses, limit,
+            )
+            return [Job(**dict(r)) for r in rows]
+
     async def get_job_counts(self) -> Dict[str, Any]:
         """Get job counts by region and status."""
         async with self.pool.acquire() as conn:
@@ -155,6 +171,29 @@ class Repository:
                 json.dumps(fields), application_id,
             )
             return result == "UPDATE 1"
+
+    async def get_application_by_job(self, job_id: str) -> Optional[Application]:
+        """Most recent application for a job (prevents duplicate applications)."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM applications WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1",
+                job_id,
+            )
+            return Application(**dict(row)) if row else None
+
+    async def get_today_application_count(self) -> int:
+        """Applications created today (for daily caps)."""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT COUNT(*) FROM applications WHERE created_at > CURRENT_DATE"
+            ) or 0
+
+    async def get_today_email_count(self) -> int:
+        """Emails sent today (for daily caps)."""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT COUNT(*) FROM emails WHERE sent_at > CURRENT_DATE"
+            ) or 0
 
     async def get_applications(
         self,
