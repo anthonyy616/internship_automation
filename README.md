@@ -53,7 +53,31 @@ An AI-powered autonomous agent system that discovers internship and entry-level 
 | Arbeitnow | API | EU tech jobs |
 | HackerNews | API | Who's Hiring posts |
 | Jobicy | API | Remote positions |
+| Jobberman | Scrape | Nigeria |
+| MyJobMag | Scrape | Nigeria |
+| Eleman.net | Scrape | Türkiye |
+| Prospects | API | UK graduate jobs |
+| Milkround | Scrape (Playwright) | UK graduate jobs |
 | LinkedIn / Indeed | **Manual only** | Surfaced as dashboard links — no scraping |
+
+> **Why not kariyer.net or JobTeaser/Graduateland?** kariyer.net returns HTTP 403
+to non-browser clients and JobTeaser gates listings behind an anti-bot
+interstitial. Both are skipped; Eleman.net covers Türkiye and Arbeitnow/Jobicy
+cover EU/remote.
+
+## Project Status
+
+All implementation phases are complete:
+
+| Phase | Status |
+|-------|--------|
+| 1. Foundation (Neon schema, event logging, config service) | ✅ |
+| 2. Source adapters (4 global API + 5 regional) | ✅ |
+| 3. arq task queue + job state machine | ✅ |
+| 4. Tiered auto-apply (Greenhouse, Lever, Ashby, Workday, generic LLM) | ✅ |
+| 5. Email safety (self-check, kill switch, warm-up) | ✅ |
+| 6. Admin panel (auth, CRUD, replay, review queue) | ✅ |
+| 7. Docker + deployment | ✅ |
 
 ## Auto-Apply Tiers
 
@@ -112,8 +136,30 @@ Open http://localhost:8000/admin for the admin panel.
 ### Docker
 
 ```bash
-docker compose up
+docker compose up --build
 ```
+
+This starts three services: the FastAPI app (port 8000), the arq worker, and
+Redis. `data/` and `config/` are mounted from the host so your resume,
+screenshots, and config survive container rebuilds.
+
+### First Run (important)
+
+1. **Apply the migration** (creates tables + seeds config):
+   ```bash
+   docker compose exec app python -m backend.db.migrate
+   ```
+2. **Set admin credentials** in `.env`: `ADMIN_PASSWORD`, and optionally
+   `ADMIN_TOTP_SECRET` (generate with `python -c "import pyotp; print(pyotp.random_base32())"`).
+   Scan the URI shown on `/admin/2fa` into your authenticator app.
+3. **Auto-apply starts in dry-run mode** (`apply.dry_run = true` in the DB
+   `config` table). It fills forms, takes screenshots, and never clicks submit
+   until you flip the flag — via `POST /api/config/apply` with
+   `{"dry_run": false}` or by toggling it through the API. Run a few dry-run
+   cycles and review the screenshots in the admin panel before going live.
+4. **Email sending** stays disabled until `SMTP_USER`/`SMTP_PASSWORD` are set
+   and at least one job exposes a contact email (domain guessing is opt-in via
+   `email.allow_domain_guess`).
 
 ## Configuration
 
@@ -163,6 +209,7 @@ internship_automation/
 │   ├── auth.py                 # Password + TOTP 2FA
 │   ├── admin/                  # Admin panel (routes + templates)
 │   ├── db/                     # Neon schema + migrations
+│   ├── workers/                # arq workers + cron scheduler
 │   └── services/
 │       ├── sources/            # Job source adapters
 │       ├── applier/            # Tiered auto-apply
@@ -170,6 +217,7 @@ internship_automation/
 │       ├── event_logger.py     # Structured event logging
 │       ├── config_service.py   # DB-backed config
 │       ├── filter.py           # Dedup + eligibility
+│       ├── orchestrator.py     # arq enqueue + worker control
 │       └── inference.py        # LLM form-field mapping
 ├── frontend/                   # Dashboard UI
 ├── data/                       # Screenshots, resume (gitignored)
