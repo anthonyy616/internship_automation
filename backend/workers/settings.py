@@ -7,6 +7,7 @@ or:
     python -m arq backend.workers.settings.WorkerSettings
 """
 
+import os
 import asyncio
 import sys
 
@@ -15,11 +16,6 @@ from arq.connections import RedisSettings
 
 from backend.config import settings
 from backend.workers.scrape_worker import scrape_source
-
-# Windows: use the Selector event loop (see backend/app.py for why) so
-# arq's redis connections don't hit the Proactor connect/cancel race.
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from backend.workers.apply_worker import apply_to_job
 from backend.workers.email_worker import send_email
 from backend.workers.scheduler import schedule_scraping, process_queue

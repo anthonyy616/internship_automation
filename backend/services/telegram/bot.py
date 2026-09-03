@@ -19,17 +19,11 @@ Run standalone (no web server needed):
 
 import asyncio
 import logging
-import sys
 from typing import Callable, List, Optional
 
 import httpx
 
 from backend.config import settings
-
-# Windows: use the Selector event loop (see backend/app.py for why) so
-# httpx / redis connections don't hit the Proactor connect/cancel race.
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 logger = logging.getLogger(__name__)
 
