@@ -128,3 +128,43 @@ class SourceRegistry:
             except Exception:
                 results[name] = False
         return results
+
+
+def build_default_registry() -> SourceRegistry:
+    """
+    Build a registry with every source adapter registered.
+
+    Global API sources:    remotive, arbeitnow, hackernews, jobicy
+    Nigeria:               jobberman, myjobmag
+    Türkiye:               eleman
+    UK:                    prospects, milkround
+
+    Note: kariyer.net (Türkiye) is excluded — it returns HTTP 403 to
+    non-browser clients. JobTeaser (ex-Graduateland, EU) is excluded —
+    it is gated behind an anti-bot "security checkup" interstitial.
+    EU/remote is covered by arbeitnow and jobicy.
+    """
+    from backend.services.sources.remotive import RemotiveAdapter
+    from backend.services.sources.arbeitnow import ArbeitnowAdapter
+    from backend.services.sources.hackernews import HackerNewsAdapter
+    from backend.services.sources.jobicy import JobicyAdapter
+    from backend.services.sources.jobberman import JobbermanAdapter
+    from backend.services.sources.myjobmag import MyJobMagAdapter
+    from backend.services.sources.eleman import ElemanAdapter
+    from backend.services.sources.prospects import ProspectsAdapter
+    from backend.services.sources.milkround import MilkroundAdapter
+
+    registry = SourceRegistry()
+    for adapter in (
+        RemotiveAdapter(),
+        ArbeitnowAdapter(),
+        HackerNewsAdapter(),
+        JobicyAdapter(),
+        JobbermanAdapter(),
+        MyJobMagAdapter(),
+        ElemanAdapter(),
+        ProspectsAdapter(),
+        MilkroundAdapter(),
+    ):
+        registry.register(adapter)
+    return registry
