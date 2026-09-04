@@ -62,7 +62,9 @@ const elements = {
     qInProgress: document.getElementById('qInProgress'),
     qAwaiting: document.getElementById('qAwaiting'),
     qLastActivity: document.getElementById('qLastActivity'),
-    qMode: document.getElementById('qMode')
+    qMode: document.getElementById('qMode'),
+    analyticsCard: document.getElementById('analyticsCard'),
+    analyticsTable: document.getElementById('analyticsTable')
 };
 
 // ============================================
@@ -206,6 +208,32 @@ async function refreshQueueStatus() {
         elements.qMode.className = 'queue-val ' + (data.dry_run_mode ? 'q-dry' : 'q-live');
     } catch (e) {
         setQueueWorker(elements.qWorker, false);
+    }
+}
+
+async function refreshAnalytics() {
+    try {
+        const res = await fetch('/api/analytics?limit=15');
+        const data = await res.json();
+        const rows = data.domains || [];
+        if (!rows.length) {
+            elements.analyticsCard.style.display = 'none';
+            return;
+        }
+        elements.analyticsCard.style.display = 'flex';
+        elements.analyticsTable.querySelector('tbody').innerHTML = rows.map(d => {
+            const rate = d.rate == null ? '—' : Math.round(d.rate * 100) + '%';
+            const cls = d.rate == null ? '' : (d.rate >= 0.5 ? 'rate-good' : 'rate-bad');
+            return `<tr>
+                <td>${escapeHtml(d.domain)}</td>
+                <td>${d.applied ?? 0}</td>
+                <td>${d.failed ?? 0}</td>
+                <td class="${cls}">${rate}</td>
+                <td>${timeAgo(d.last_attempt)}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        /* analytics are best-effort */
     }
 }
 
@@ -658,11 +686,13 @@ async function init() {
     await prefillConfigForm();
     await refreshStatus();
     refreshQueueStatus();
+    refreshAnalytics();
     loadJobs();
 
     // Keep the strip + buttons truthful while the bot works
     setInterval(refreshQueueStatus, 4000);
     setInterval(refreshStatus, 8000);
+    setInterval(refreshAnalytics, 20000);
 }
 
 document.addEventListener('DOMContentLoaded', init);

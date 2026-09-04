@@ -465,6 +465,25 @@ async def get_jobs(
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/analytics")
+async def get_analytics(limit: int = 15):
+    """Per-domain auto-apply track record (which sites actually work)."""
+    try:
+        repo = get_repo()
+        rows = await repo.get_domain_apply_stats(limit=limit)
+        out = []
+        for r in rows:
+            r["last_attempt"] = r["last_attempt"].isoformat() if r.get("last_attempt") else None
+            applied = r.get("applied") or 0
+            failed = r.get("failed") or 0
+            total = applied + failed
+            r["rate"] = round(applied / total, 2) if total else None
+            out.append(r)
+        return {"domains": out, "total": len(out)}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/api/events")
 async def get_events(
     application_id: Optional[str] = None,

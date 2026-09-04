@@ -147,18 +147,32 @@ class GreenhouseAdapter(ApplierAdapter):
             result.error = "dry_run"
             return result
 
-        # Submit
+        # Submit + verify the outcome (never assume success — T1)
+        before_url = page.url
         try:
             submit = page.locator("input[type='submit'], button[type='submit'], button:has-text('Submit Application')").first
             await submit.click(timeout=10000)
-            await page.wait_for_timeout(3000)
-            screenshot2 = await self._screenshot(page, ctx, "after_submit")
-            result.screenshot_url = screenshot2 or screenshot
-            result.success = True
-            result.applied_via = "form"
         except Exception as e:
             result.success = False
             result.error = f"submit failed: {e}"
+            return result
+
+        state = await self.detect_submission_state(page, before_url)
+        screenshot2 = await self._screenshot(page, ctx, "after_submit")
+        result.screenshot_url = screenshot2 or screenshot
+        if state == "challenge":
+            result.success = False
+            result.challenge = True
+            result.error = "human verification required (captcha/login wall)"
+        elif state == "validation_error":
+            result.success = False
+            result.error = "submission validation error: " + (await self._first_validation_error(page) or "see screenshot")
+        elif state == "success":
+            result.success = True
+            result.applied_via = "form"
+        else:
+            result.success = False
+            result.error = "submission outcome unknown — verify via email"
 
         return result
 

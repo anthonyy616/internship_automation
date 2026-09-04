@@ -310,6 +310,28 @@ class Repository:
         async with self.pool.acquire() as conn:
             return await conn.fetchval("SELECT MAX(created_at) FROM agent_events")
 
+    async def get_domain_apply_stats(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Per-domain auto-apply track record (T4 analytics).
+
+        Built from agent_events so it reflects reality: applied = verified
+        submissions, failed = apply failures, dry_runs = fills without submit.
+        """
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT COALESCE(NULLIF(split_part(split_part(target_url, '://', 2), '/', 1), ''), 'unknown') AS domain,
+                          COUNT(*) FILTER (WHERE status = 'success' AND action = 'applied') AS applied,
+                          COUNT(*) FILTER (WHERE status = 'failed' AND action IN ('apply_failed', 'apply_error')) AS failed,
+                          COUNT(*) FILTER (WHERE action = 'dry_run_completed') AS dry_runs,
+                          MAX(created_at) AS last_attempt
+                   FROM agent_events
+                   WHERE stage = 'apply' AND action IN ('applied', 'apply_failed', 'apply_error', 'dry_run_completed')
+                   GROUP BY 1
+                   ORDER BY applied DESC, failed ASC
+                   LIMIT $1""",
+                limit,
+            )
+            return [dict(r) for r in rows]
+
     async def get_today_email_count(self) -> int:
         """Emails sent today (for daily caps)."""
         async with self.pool.acquire() as conn:

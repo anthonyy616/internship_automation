@@ -10,6 +10,7 @@ Usage:
 
 import asyncio
 import sys
+from types import SimpleNamespace
 
 from backend.services.sources.base import JobListing
 from backend.services.config_service import LimitsConfig, EmailConfig, BlocklistConfig
@@ -106,6 +107,20 @@ class FakeRepo:
         self.applications[app_id] = app
         return app
 
+    async def create_confirmation(self, application_id, question_text, field_type=None,
+                                  options=None, telegram_message_id=None):
+        if not hasattr(self, "confirmations"):
+            self.confirmations = []
+        conf = SimpleNamespace(
+            id=f"conf-{len(self.confirmations) + 1}",
+            application_id=application_id,
+            question_text=question_text,
+            field_type=field_type,
+            status="pending",
+        )
+        self.confirmations.append(conf)
+        return conf
+
     async def get_application(self, application_id):
         return self.applications.get(application_id)
 
@@ -113,6 +128,11 @@ class FakeRepo:
         self.app_statuses[application_id] = status
         if application_id in self.applications:
             self.applications[application_id].status = status
+        return True
+
+    async def save_filled_fields(self, application_id, fields):
+        if application_id in self.applications:
+            self.applications[application_id].filled_fields = fields
         return True
 
     async def get_today_email_count(self):
@@ -263,10 +283,11 @@ async def test_apply_worker_no_applier_marks_needs_manual():
 
 
 class StubApplier:
-    def __init__(self, success=True, error="", dry_run=False):
+    def __init__(self, success=True, error="", dry_run=False, challenge=False):
         self.success = success
         self.error = error
         self.dry_run = dry_run
+        self.challenge = challenge
 
     async def apply(self, job, application):
         class R:
@@ -278,6 +299,7 @@ class StubApplier:
         r.needs_input = False
         r.filled_fields = {}
         r.dry_run = self.dry_run
+        r.challenge = self.challenge
         return r
 
 
@@ -341,6 +363,23 @@ async def test_apply_worker_resumes_dry_run_and_filling_applications():
     assert repo.job_statuses["job-1"] == "applied"
 
 
+async def test_apply_worker_escalates_challenge_and_pauses():
+    repo = FakeRepo()
+    job = FakeJob("job-1", url="https://example.com/job-1")
+    repo.jobs["job-1"] = job
+    ctx = build_ctx(repo=repo, registry=FakeRegistry([]), applier=StubApplier(success=False, challenge=True))
+
+    result = await apply_to_job(ctx, "job-1")
+
+    # A CAPTCHA/login wall must pause + ask the operator, not fail blindly
+    assert result["status"] == "paused"
+    assert result["reason"] == "challenge"
+    assert repo.app_statuses["app-1"] == "paused_awaiting_input"
+    assert any(c.field_type == "challenge" for c in repo.confirmations), "challenge confirmation must be created"
+    escalated = [e for e in ctx["event_logger"].events if e["action"] == "challenge_escalated"]
+    assert len(escalated) == 1
+
+
 async def test_apply_worker_respects_daily_limit():
     repo = FakeRepo()
     job = FakeJob("job-1", url="https://example.com/job-1")
@@ -392,6 +431,7 @@ def main():
         test_apply_worker_failure_transitions,
         test_apply_worker_dry_run_is_not_recorded_as_applied,
         test_apply_worker_resumes_dry_run_and_filling_applications,
+        test_apply_worker_escalates_challenge_and_pauses,
         test_apply_worker_respects_daily_limit,
         test_email_worker_without_sender_is_pending_not_sent,
         test_scheduler_imports_and_cron_exists,

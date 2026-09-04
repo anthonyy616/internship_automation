@@ -1,10 +1,10 @@
 """
 Generic applier (Tier 2) — LLM-assisted filling of unknown/arbitrary forms.
 
-Extracts every visible form control (including controls living inside
-iframes and popups, e.g. embedded Ashby/Lever/Typeform apply forms), asks
-the LLM to map each input to a profile/answer key, fills what it can, and
-escalates what it can't:
+Extracts every form control (including controls inside iframes, popups,
+open/closed shadow roots, and contenteditable fields), asks the LLM to map
+each input to a profile/answer key, fills what it can, and escalates what
+it can't:
 
     - required text/select questions with no known answer become Telegram
       confirmations (Category-A escalation) so the user can answer once and
@@ -12,18 +12,30 @@ escalates what it can't:
     - when escalation isn't available (no repo/application) or too many
       fields remain unfilled it bails to Tier 3 with a "low confidence"
       failure instead of guessing;
-    - if no form is visible at all (many job posts render the application
-      behind a button or a late-loading iframe), it waits briefly, then
-      clicks through ATS application links (Lever, Greenhouse, Ashby, ...)
-      before giving up.
+    - multi-step forms (Next/Continue pages) are walked step by step;
+    - consent/T&C checkboxes are a hard pre-submit gate;
+    - submission is only recorded as success when the page actually
+      confirms it (thank-you / navigation) — a validation error, CAPTCHA
+      or ambiguous outcome fails honestly with a screenshot.
+
+If no form is visible at all (many job posts render the application
+behind a button or a late-loading iframe), it waits briefly, then clicks
+through ATS application links (Lever, Greenhouse, Ashby, ...) before
+giving up with a screenshot of the dead end.
 """
 
 import asyncio
+import random
+import re
+from datetime import datetime
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
+from backend.config import settings
 from backend.services.applier.base import (
     ApplierAdapter, ApplyContext, ApplyResult,
 )
+from backend.services.applier.stealth import dismiss_cookie_banners
 
 MAX_INPUTS_FOR_LLM = 60
 MAX_UNFILLED_BEFORE_BAIL = 3
@@ -32,32 +44,83 @@ MAX_ESCALATIONS_PER_FORM = 8
 # HTML input types we know how to fill with free text
 TEXTUAL_INPUT_TYPES = {"", "text", "email", "tel", "number", "url", "date", "search", "password"}
 
+SUBMIT_TEXTS = ("Submit Application", "Submit application", "Submit", "Send Application", "Apply Now")
+NEXT_TEXTS = ("Next", "Continue", "Save and continue", "Save & continue", "Review")
+
+# ----------------------------------------------------------------------
+# Extraction script v2: frames + shadow roots + editable + honeypots.
+# Each collected control gets a stable data-botidx attribute so filling
+# never has to fight with quirky/duplicated name/id attributes.
+# ----------------------------------------------------------------------
+
 EXTRACT_JS = """() => {
-    return Array.from(document.querySelectorAll('input, select, textarea')).map((el, i) => {
-        const id = el.id, name = el.name, ph = el.placeholder;
-        let label = '';
-        if (id) {
-            const l = document.querySelector(`label[for="${CSS.escape(id)}"]`);
-            if (l) label = l.innerText.trim();
+    const out = [];
+    const HONEYPOT_NAMES = ['website', 'company', 'url', 'fax', 'phone2',
+                            'confirm_email', 'email2', 'homepage', 'your_website', 'address2'];
+    const BOTID = 'botidx';
+    let counter = 0;
+
+    const labelFor = (el, root) => {
+        if (el.id) {
+            const l = root.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+            if (l) return l.innerText.trim();
         }
-        if (!label && el.parentElement) label = el.parentElement.innerText.trim().slice(0, 60);
-        const rect = el.getBoundingClientRect();
-        const visible = el.offsetParent !== null && rect.width > 0 && rect.height > 0;
-        let options = [];
-        if (el.tagName === 'SELECT') {
-            options = Array.from(el.options)
-                .map(o => (o.text || o.value || '').trim())
-                .filter(Boolean);
+        if (el.closest && el.closest('label')) return el.closest('label').innerText.trim();
+        const prev = el.previousElementSibling;
+        if (prev && prev.tagName === 'LABEL') return prev.innerText.trim();
+        if (el.parentElement && el.parentElement.tagName === 'LABEL') return el.parentElement.innerText.trim();
+        if (el.placeholder) return el.placeholder.trim();
+        // Last resort: container text minus controls (buttons, other inputs)
+        if (el.parentElement) {
+            let t = '';
+            for (const n of el.parentElement.childNodes) {
+                if (n.nodeType === 3) t += n.textContent + ' ';
+                else if (n.nodeType === 1 && !['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(n.tagName)) {
+                    if (n.tagName === 'LABEL') t += n.innerText + ' ';
+                }
+            }
+            return t.trim().slice(0, 60);
         }
-        return {
-            idx: i, tag: el.tagName, type: el.type || '', name: name || '', id: id || '',
-            placeholder: ph || '', label: label, visible: visible,
-            required: el.required === true
-                || el.getAttribute('aria-required') === 'true'
-                || (el.closest && !!el.closest('[aria-required="true"]')),
-            checked: el.checked === true, options: options
-        };
-    });
+        return '';
+    };
+
+    const collect = (root) => {
+        root.querySelectorAll('input, select, textarea, [contenteditable="true"], [role="textbox"]')
+            .forEach((el) => {
+                const id = el.id, name = el.name, ph = el.placeholder;
+                let label = labelFor(el, root);
+                const rect = el.getBoundingClientRect();
+                const cs = getComputedStyle(el);
+                const visible = el.offsetParent !== null && rect.width > 0 && rect.height > 0
+                    && cs.visibility !== 'hidden' && cs.display !== 'none';
+                const hn = (name || '').toLowerCase();
+                const honeypot = el.type === 'hidden'
+                    || (cs.display === 'none' && el.tabIndex < 0)
+                    || el.getAttribute('aria-hidden') === 'true'
+                    || (hn && HONEYPOT_NAMES.indexOf(hn) !== -1);
+                let options = [];
+                if (el.tagName === 'SELECT') {
+                    options = Array.from(el.options)
+                        .map(o => (o.text || o.value || '').trim()).filter(Boolean);
+                }
+                counter += 1;
+                el.setAttribute('data-' + BOTID, String(counter));
+                out.push({
+                    idx: counter, tag: el.tagName, type: el.type || '', name: name || '', id: id || '',
+                    placeholder: ph || '', label: label, visible: visible, honeypot: honeypot,
+                    required: el.required === true
+                        || el.getAttribute('aria-required') === 'true'
+                        || (el.closest && !!el.closest('[aria-required="true"]')),
+                    checked: el.checked === true, options: options,
+                    editable: el.isContentEditable === true || el.getAttribute('role') === 'textbox'
+                });
+            });
+        root.querySelectorAll('*').forEach((el) => {
+            if (el.shadowRoot) collect(el.shadowRoot);
+        });
+    };
+    collect(document);
+    return out;
 }"""
 
 
@@ -76,26 +139,40 @@ CONSENT_TOKENS = (
     "authoriz", "conditions", "permission",
 )
 
+# Labels that hint at autocomplete/typeahead comboboxes (need option-click)
+COMBOBOX_HINTS = (
+    "city", "school", "university", "country", "location", "institution",
+    "skills", "language", "college",
+)
+
+FORM_WAIT_ROUNDS = 6      # poll up to ~9s for late-rendering forms/iframes
+FORM_WAIT_SECONDS = 1.5
 
 # LLM failure messages we have already surfaced to the operator (per worker
 # process), so a dead OpenAI key doesn't spam the event log 40 times.
 _LLM_ERRORS_SEEN: set = set()
 
 
-def is_consent_label(label: str) -> bool:
-    """True when a checkbox label asks for consent/opt-in that every
-    applicant must give before the form can be submitted."""
-    lower = (label or "").lower()
-    return any(tok in lower for tok in CONSENT_TOKENS)
+def _to_iso_date(value: str) -> str:
+    """Normalise common date formats to YYYY-MM-DD for input[type=date]."""
+    v = str(value).strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        return v
+    for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%d %B %Y", "%B %d, %Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(v, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return ""
 
-FORM_WAIT_ROUNDS = 6      # poll up to ~9s for late-rendering forms/iframes
-FORM_WAIT_SECONDS = 1.5
 
 def field_kind(field: Dict) -> str:
     """Classify a control into 'text' | 'select' | 'checkbox' | 'radio' |
     | 'file' | 'button' | 'hidden'."""
     tag = (field.get("tag") or "").lower()
     ftype = (field.get("type") or "").lower()
+    if field.get("editable"):
+        return "text"
     if tag == "select":
         return "select"
     if tag == "textarea":
@@ -122,6 +199,36 @@ def question_text(field: Dict) -> str:
     return ""
 
 
+def is_consent_label(label: str) -> bool:
+    """True when a checkbox label asks for consent/opt-in that every
+    applicant must give before the form can be submitted."""
+    lower = (label or "").lower()
+    return any(tok in lower for tok in CONSENT_TOKENS)
+
+
+# Deterministic question -> profile-key hints. This is the no-LLM safety
+# net: standard questions (name, email, university…) are matched to the
+# profile even when OpenAI credits are exhausted and mapping returns {}.
+PROFILE_HINTS = (
+    (("full name", "first name", "last name", "your name", "candidate name", "what is your name"), "name"),
+    (("email", "e-mail", "email address", "e-mail address", "contact email"), "email"),
+    (("phone", "telephone", "mobile", "phone number", "contact number", "whatsapp"), "phone"),
+    (("university", "college", "institution", "school", "education"), "university"),
+    (("major", "degree", "field of study", "course", "programme", "program", "study"), "major"),
+    (("skills", "technologies", "tech stack", "programming languages"), "skills"),
+    (("portfolio", "github", "personal website", "website url", "linkedin"), "portfolio_url"),
+)
+
+
+def profile_key_for_question(question: str) -> str:
+    """Map a common question to its profile key, or '' when unknown."""
+    q = (question or "").lower()
+    for tokens, key in PROFILE_HINTS:
+        if any(tok in q for tok in tokens):
+            return key
+    return ""
+
+
 def decide_field(field: Dict, mapping: Dict, ctx: ApplyContext) -> Dict:
     """
     Decide what to do with one extracted control.
@@ -129,13 +236,17 @@ def decide_field(field: Dict, mapping: Dict, ctx: ApplyContext) -> Dict:
     Returns one of:
         {"action": "fill",    "key": ..., "value": ...}
         {"action": "escalate", "question": ..., "field_type": ..., "options": ...}
+        {"action": "check",   "key": ...}
         {"action": "skip",    "reason": ...}
 
     Escalation happens only for *required* free-text/select questions that
-    have no stored answer — exactly the facts only the user can supply.
-    Optional fields, consent-style checkboxes, radios, and buttons are
-    skipped (never guessed, never escalated).
+    have no stored answer. Optional fields, honeypots, and consent-style
+    checkboxes are skipped (never guessed, never escalated).
     """
+    # Honeypots must never be filled or counted
+    if field.get("honeypot"):
+        return {"action": "skip", "reason": "honeypot"}
+
     kind = field_kind(field)
     if kind in ("file", "hidden", "button"):
         return {"action": "skip", "reason": f"non-fillable kind {kind}"}
@@ -147,6 +258,10 @@ def decide_field(field: Dict, mapping: Dict, ctx: ApplyContext) -> Dict:
     key = ""
     if mapping:
         key = (mapping.get(field.get("name")) or mapping.get(field.get("id")) or "").strip()
+
+    # 1b) No-LLM safety net: deterministic question -> profile key
+    if not key and question:
+        key = profile_key_for_question(question)
 
     # 2) Resolve a value from the profile or the Q&A bank
     value = ""
@@ -194,8 +309,13 @@ def decide_field(field: Dict, mapping: Dict, ctx: ApplyContext) -> Dict:
 class GenericApplier(ApplierAdapter):
     platform = "generic"
 
+    # ------------------------------------------------------------------
+    # Control scanning
+    # ------------------------------------------------------------------
+
     async def _scan_controls(self, page):
-        """Collect visible controls from every page (incl. popups) and frame."""
+        """Collect controls from every page (incl. popups) and frame,
+        including shadow-DOM controls (EXTRACT_JS walks shadow roots)."""
         pages = [page]
         try:
             pages = list(page.context.pages) or [page]
@@ -217,7 +337,7 @@ class GenericApplier(ApplierAdapter):
         """Poll for a rendered form (late-loading iframes/modals) up to ~9s."""
         for _ in range(FORM_WAIT_ROUNDS):
             controls = await self._scan_controls(page)
-            visible = [c for c in controls if c.get("visible")]
+            visible = [c for c in controls if c.get("visible") and not c.get("honeypot")]
             if visible:
                 return visible
             await page.wait_for_timeout(int(FORM_WAIT_SECONDS * 1000))
@@ -245,8 +365,45 @@ class GenericApplier(ApplierAdapter):
             pass
         return False
 
+    # ------------------------------------------------------------------
+    # Button finding
+    # ------------------------------------------------------------------
+
+    async def _find_button(self, page, texts: tuple):
+        """Find the first button whose text matches any of `texts`,
+        searching every frame. Returns a locator or None."""
+        for frame in page.frames:
+            for text in texts:
+                try:
+                    locator = frame.locator(
+                        f"button:has-text('{text}'), input[type='submit'][value*='{text}']"
+                    ).first
+                    if await locator.count():
+                        return locator
+                except Exception:
+                    continue
+        return None
+
+    async def _find_submit(self, page):
+        """Locate a submit button (kept for compatibility with tier-1 callers)."""
+        return await self._find_button(page, SUBMIT_TEXTS)
+
+    # ------------------------------------------------------------------
+    # Main flow
+    # ------------------------------------------------------------------
+
     async def fill_and_submit(self, page, job, ctx: ApplyContext) -> ApplyResult:
         result = ApplyResult(success=False, platform=self.platform)
+
+        # A 403/429 on the main document = blocked before we even start
+        blocked = getattr(ctx, "http_blocked", None)
+        if blocked:
+            shot = await self._screenshot(page, ctx, "generic_blocked")
+            result.screenshot_url = shot
+            result.error = f"blocked by site (HTTP {'/'.join(map(str, sorted(set(blocked))))})"
+            return result
+
+        await dismiss_cookie_banners(page)
 
         # Poll for the form: many job pages render the application inside a
         # late-loading iframe or after JS kicks in.
@@ -261,12 +418,7 @@ class GenericApplier(ApplierAdapter):
             # wall? login wall? expired listing?) instead of guessing.
             shot = await self._screenshot(page, ctx, "generic_no_form")
             result.screenshot_url = shot
-            host = getattr(job, "url", "") or ""
-            try:
-                from urllib.parse import urlparse
-                host = urlparse(host).netloc or host
-            except Exception:
-                pass
+            host = urlparse(getattr(job, "url", "") or "").netloc or (getattr(job, "url", "") or "")
             result.error = f"no visible form fields found ({host or 'page'})"
             return result
 
@@ -276,13 +428,8 @@ class GenericApplier(ApplierAdapter):
             for i in visible[:MAX_INPUTS_FOR_LLM]
         ]
         form_context = "\n".join(simplified)
-
         user_keys = list(ctx.profile.keys()) + list(ctx.answers.keys())
 
-        # LLM mapping (sync langchain engine, run off the event loop). If it
-        # fails or returns nothing, degrade gracefully: known profile/Q&A
-        # fields are still filled via answer_for and unknown required
-        # questions are still escalated — only browser-level problems bail.
         mapping = {}
         from backend.services.inference import inference
         try:
@@ -319,138 +466,294 @@ class GenericApplier(ApplierAdapter):
                 pass
 
         can_escalate = ctx.repo is not None and bool(ctx.application_id)
+        escalated: List[int] = [0]
+        before_url = page.url
+        step = 0
 
-        unfilled = 0          # unresolved required fields with no escalation path
-        escalated = 0         # confirmations created this run
+        while True:
+            step += 1
+            if step > settings.apply_max_steps:
+                result.success = False
+                result.error = f"form has too many steps (> {settings.apply_max_steps})"
+                return result
+
+            await dismiss_cookie_banners(page)
+            visible = await self._find_visible_controls(page)
+            if not visible:
+                result.success = False
+                result.error = "no visible form fields found"
+                return result
+
+            outcome = await self._fill_page(page, ctx, visible, result, mapping, can_escalate, escalated)
+
+            if outcome["needs_input"]:
+                # Category-A question hit — pause and let the user answer
+                result.success = False
+                result.needs_input = True
+                result.error = "Category-A question encountered — awaiting user input"
+                return result
+
+            screenshot = await self._screenshot(page, ctx, "generic_before_submit")
+            result.screenshot_url = screenshot
+
+            if outcome["consent_blocked"]:
+                # A required checkbox we could not accept blocks submission
+                result.success = False
+                result.error = f"required checkbox not accepted — {outcome['consent_blocked']}"
+                return result
+
+            if outcome["unfilled"] > MAX_UNFILLED_BEFORE_BAIL:
+                result.success = False
+                result.error = f"low confidence — {outcome['unfilled']} required fields unfilled"
+                return result
+
+            # Dry-run: fill + screenshot, never click submit
+            if ctx.dry_run:
+                result.success = True
+                result.dry_run = True
+                result.error = "dry_run"
+                return result
+
+            submit_btn = await self._find_button(page, SUBMIT_TEXTS)
+            next_btn = await self._find_button(page, NEXT_TEXTS)
+
+            if submit_btn is not None and next_btn is None:
+                return await self._submit(page, ctx, result, before_url)
+            if next_btn is not None:
+                try:
+                    await next_btn.click(timeout=10000)
+                except Exception as e:
+                    result.success = False
+                    result.error = f"next-step click failed: {e}"
+                    return result
+                await page.wait_for_timeout(1200)
+                err = await self._first_validation_error(page)
+                if err:
+                    result.success = False
+                    result.error = f"form validation on step {step}: {err}"
+                    return result
+                continue
+            if submit_btn is not None:
+                return await self._submit(page, ctx, result, before_url)
+
+            result.success = False
+            result.error = "submit/next button not found"
+            return result
+
+    async def _submit(self, page, ctx, result: ApplyResult, before_url: str) -> ApplyResult:
+        """Click submit and verify the outcome instead of assuming success."""
+        submit = await self._find_button(page, SUBMIT_TEXTS)
+        if submit is None:
+            result.success = False
+            result.error = "submit button not found"
+            return result
+        try:
+            await submit.click(timeout=10000)
+        except Exception as e:
+            result.success = False
+            result.error = f"submit failed: {e}"
+            return result
+
+        state = await self.detect_submission_state(page, before_url)
+        shot2 = await self._screenshot(page, ctx, "generic_after_submit")
+        result.screenshot_url = shot2 or result.screenshot_url
+
+        if state == "challenge":
+            result.success = False
+            result.challenge = True
+            result.error = "human verification required (captcha/login wall)"
+            return result
+        if state == "validation_error":
+            result.success = False
+            result.error = "submission validation error: " + (
+                await self._first_validation_error(page) or "see screenshot"
+            )
+            return result
+        if state == "success":
+            result.success = True
+            result.applied_via = "form"
+            return result
+        result.success = False
+        result.error = "submission outcome unknown — verify via email"
+        return result
+
+    # ------------------------------------------------------------------
+    # One page of the form
+    # ------------------------------------------------------------------
+
+    async def _fill_page(self, page, ctx, visible, result, mapping, can_escalate, escalated) -> Dict:
+        """Fill everything decidable on the current step.
+
+        Returns {"needs_input", "unfilled", "consent_blocked", "escalated"}.
+        """
+        unfilled = 0
         needs_input = False
 
         for field in visible:
             decision = decide_field(field, mapping, ctx)
+            action = decision["action"]
 
-            if decision["action"] == "fill":
-                selector = self._selector_for(field)
-                if not selector:
-                    if field.get("required"):
-                        unfilled += 1
-                    continue
-                value = decision["value"]
-                locator = field["frame"].locator(selector).first
-
-                try:
-                    filled = await self._fill_locator(locator, value)
-                except Exception:
-                    filled = False
+            if action == "fill":
+                filled = await self._fill_field(field, decision["value"], ctx)
                 if filled:
-                    result.filled_fields[decision["key"]] = value
-                    await self._log_field(ctx, decision["key"][:40], value)
+                    result.filled_fields[decision["key"]] = decision["value"]
+                    await self._log_field(ctx, decision["key"][:40], decision["value"])
                 elif field.get("required"):
                     unfilled += 1
                 continue
 
-            if decision["action"] == "check":
-                selector = self._selector_for(field)
-                if selector:
-                    try:
-                        locator = field["frame"].locator(selector).first
-                        if await locator.count():
-                            await locator.check()
-                            result.filled_fields[decision["key"]] = "checked"
-                    except Exception:
-                        if field.get("required"):
-                            unfilled += 1
+            if action == "check":
+                ok = await self._check_field(field)
+                if ok:
+                    result.filled_fields[decision["key"]] = "checked"
                 elif field.get("required"):
                     unfilled += 1
                 continue
 
-            if decision["action"] == "escalate":
-                if can_escalate and escalated < MAX_ESCALATIONS_PER_FORM:
+            if action == "escalate":
+                if can_escalate and escalated[0] < MAX_ESCALATIONS_PER_FORM:
                     needs_input = True
-                    escalated += 1
+                    escalated[0] += 1
                     await self._escalate(ctx, decision["question"],
                                          decision["field_type"], decision.get("options"))
-                else:
-                    if field.get("required"):
-                        unfilled += 1
+                elif field.get("required"):
+                    unfilled += 1
                 continue
 
-            # skip — any unresolved REQUIRED field (except file inputs, which
-            # the resume uploader handles above) counts against the confidence
-            # gate so we never submit a knowingly-incomplete form.
-            if field.get("required") and field_kind(field) != "file":
+            # skip — any unresolved REQUIRED field (except file inputs and
+            # honeypots) counts against the confidence gate so we never
+            # submit a knowingly-incomplete form.
+            if field.get("required") and field_kind(field) != "file" and decision.get("reason") != "honeypot":
                 unfilled += 1
-            continue
 
-        # Resume upload (file inputs across every frame)
-        if ctx.resume_path:
-            for field in visible:
-                if field_kind(field) != "file":
-                    continue
-                try:
-                    file_input = field["frame"].locator(
-                        f"{field['tag'].lower()}[type='file']"
-                    ).first
-                    if await file_input.count():
-                        await file_input.set_input_files(ctx.resume_path)
-                        result.filled_fields["resume"] = "uploaded"
-                except Exception:
-                    pass
-
-        # Pre-submit consent sweep: tick every visible unchecked consent box
-        # (labels vary wildly) and never submit while a required checkbox is
-        # unresolved — an application sent without accepting T&C is worse
-        # than no application at all.
+        await self._upload_resume(page, ctx, visible, result)
         _, consent_blocked = await self._ensure_consent_checked(visible)
 
-        screenshot = await self._screenshot(page, ctx, "generic_before_submit")
-        result.screenshot_url = screenshot
+        return {
+            "needs_input": needs_input,
+            "unfilled": unfilled,
+            "consent_blocked": consent_blocked,
+            "escalated": escalated[0],
+        }
 
-        # Escalation happened — pause and let the user answer via Telegram
-        if needs_input:
-            result.success = False
-            result.needs_input = True
-            result.error = "Category-A question encountered — awaiting user input"
-            return result
+    # ------------------------------------------------------------------
+    # Field filling (per control type)
+    # ------------------------------------------------------------------
 
-        # A required checkbox that we could not accept (not consent wording,
-        # or consent wording we failed to click) blocks submission entirely.
-        if consent_blocked:
-            result.success = False
-            result.error = f"required checkbox not accepted — {consent_blocked}"
-            return result
-
-        # Confidence gate: too many required fields left unfilled -> Tier 3
-        if unfilled > MAX_UNFILLED_BEFORE_BAIL:
-            result.success = False
-            result.error = f"low confidence — {unfilled} required fields unfilled"
-            return result
-
-        if ctx.dry_run:
-            result.success = True
-            result.dry_run = True
-            result.error = "dry_run"
-            return result
-
-        # Submit (best effort, across frames)
+    async def _fill_field(self, field, value: str, ctx) -> bool:
+        selector = self._selector_for(field)
+        if not selector or not value:
+            return False
         try:
-            submit = await self._find_submit(page)
-            if submit is None:
-                result.error = "submit button not found"
-                return result
-            await submit.click(timeout=10000)
-            await page.wait_for_timeout(3000)
-            shot2 = await self._screenshot(page, ctx, "generic_after_submit")
-            result.screenshot_url = shot2 or screenshot
-            result.success = True
-            result.applied_via = "form"
-        except Exception as e:
-            result.success = False
-            result.error = f"submit failed: {e}"
+            locator = field["frame"].locator(selector).first
+            if not await locator.count():
+                return False
+            kind = field_kind(field)
+            if kind == "select":
+                try:
+                    await locator.select_option(label=str(value))
+                    return True
+                except Exception:
+                    await locator.select_option(value=str(value))
+                    return True
+            if kind == "radio":
+                try:
+                    await locator.check()
+                    return True
+                except Exception:
+                    await field["frame"].locator(f"{selector}[value='{value}']").first.click()
+                    return True
+            if kind == "checkbox":
+                if str(value).lower() in ("true", "yes", "1", "on", "y"):
+                    await locator.check()
+                else:
+                    await locator.uncheck()
+                return True
+            if kind == "file":
+                return False  # handled by _upload_resume
 
-        return result
+            el_type = ""
+            try:
+                el_type = (await locator.evaluate("e => (e.type || '').toLowerCase()")) or ""
+            except Exception:
+                pass
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+            if el_type == "date":
+                iso = _to_iso_date(str(value))
+                if iso:
+                    await locator.fill(iso)
+                    return True
+                return False
+
+            question = question_text(field)
+            if el_type == "text" and any(h in question.lower() for h in COMBOBOX_HINTS):
+                return await self._fill_combobox(locator, str(value))
+
+            # textarea, contenteditable, plain text, email, tel, ...
+            return await self._human_type(locator, str(value))
+        except Exception:
+            return False
+
+    async def _fill_combobox(self, locator, value: str) -> bool:
+        """Typeahead fields: click, type, pick the matching option."""
+        try:
+            await locator.click()
+            await locator.fill("")
+            await locator.type(str(value), delay=random.randint(40, 90))
+            await locator.page.wait_for_timeout(600)
+            try:
+                option = locator.page.locator("[role='option']").filter(has_text=str(value)[:25]).first
+                if await option.count():
+                    await option.click()
+                    return True
+            except Exception:
+                pass
+            await locator.press("Enter")
+            await locator.page.wait_for_timeout(300)
+            return True
+        except Exception:
+            return False
+
+    async def _check_field(self, field) -> bool:
+        selector = self._selector_for(field)
+        if not selector:
+            return False
+        try:
+            locator = field["frame"].locator(selector).first
+            if await locator.count():
+                await locator.check()
+                return True
+        except Exception:
+            pass
+        return False
+
+    async def _upload_resume(self, page, ctx, visible, result) -> None:
+        """Upload the resume to file inputs, with a file-chooser fallback
+        for drag-drop-only widgets."""
+        if not ctx.resume_path:
+            return
+        for field in visible:
+            if field_kind(field) != "file":
+                continue
+            try:
+                file_input = field["frame"].locator("input[type='file']").first
+                if await file_input.count():
+                    await file_input.set_input_files(ctx.resume_path)
+                    result.filled_fields["resume"] = "uploaded"
+            except Exception:
+                pass
+        if "resume" in result.filled_fields:
+            return
+        try:
+            btn = page.get_by_role("button", name=re.compile(r"upload|attach|add resume|cv", re.I)).first
+            async with page.expect_file_chooser(timeout=2500) as fc:
+                if await btn.count():
+                    await btn.click(timeout=2000)
+            chooser = await fc.value
+            await chooser.set_files(ctx.resume_path)
+            result.filled_fields["resume"] = "uploaded"
+        except Exception:
+            pass
 
     async def _ensure_consent_checked(self, visible) -> tuple:
         """Tick every visible unchecked consent/opt-in checkbox.
@@ -468,16 +771,9 @@ class GenericApplier(ApplierAdapter):
                 continue
             label = question_text(field)
             if is_consent_label(label):
-                selector = self._selector_for(field)
-                if selector:
-                    try:
-                        locator = field["frame"].locator(selector).first
-                        if await locator.count():
-                            await locator.check()
-                            fixed.append(label[:40])
-                            continue
-                    except Exception:
-                        pass
+                if await self._check_field(field):
+                    fixed.append(label[:40])
+                    continue
                 blocker = blocker or (label or "unlabelled consent checkbox")
             elif field.get("required"):
                 blocker = blocker or (label or "required checkbox")
@@ -504,55 +800,14 @@ class GenericApplier(ApplierAdapter):
         except Exception:
             pass
 
-    async def _fill_locator(self, locator, value: str) -> bool:
-        """Fill a single resolved control (text/select/textarea) by value."""
-        if not value:
-            return False
-        try:
-            if not await locator.count():
-                return False
-            tag = (await locator.evaluate("e => e.tagName")).lower()
-            el_type = (await locator.evaluate("e => (e.type || '').toLowerCase()")) if tag == "input" else ""
-            if tag == "select":
-                try:
-                    await locator.select_option(label=value)
-                    return True
-                except Exception:
-                    await locator.select_option(value=value)
-                    return True
-            if tag == "textarea" or el_type in TEXTUAL_INPUT_TYPES:
-                await locator.fill(str(value))
-                return True
-            if el_type == "checkbox":
-                if str(value).lower() in ("true", "yes", "1", "on", "y"):
-                    await locator.check()
-                else:
-                    await locator.uncheck()
-                return True
-            await locator.fill(str(value))
-            return True
-        except Exception:
-            return False
-
-    async def _find_submit(self, page):
-        """Locate a submit button, searching every frame."""
-        for frame in page.frames:
-            try:
-                submit = frame.locator(
-                    "input[type='submit'], button[type='submit'], "
-                    "button:has-text('Submit'), button:has-text('Apply'), "
-                    "button:has-text('Send')"
-                ).first
-                if await submit.count():
-                    return submit
-            except Exception:
-                continue
-        return None
-
     @staticmethod
     def _selector_for(field: Dict) -> str:
         if field.get("name"):
             return f"{field['tag'].lower()}[name='{field['name']}']"
         if field.get("id"):
             return f"#{field['id']}"
+        # Stable attribute set by EXTRACT_JS — never collides, works for
+        # contenteditable/shadow controls too.
+        if field.get("idx") is not None:
+            return f"[data-botidx='{field['idx']}']"
         return ""

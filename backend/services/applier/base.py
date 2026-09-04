@@ -3,11 +3,15 @@ Applier base — shared types and field-filling helpers for the tiered
 auto-apply pipeline.
 """
 
+import random
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from backend.config import settings
 
 
 @dataclass
@@ -22,6 +26,7 @@ class ApplyResult:
     needs_input: bool = False          # a Category-A question was hit
     pending_confirmation_id: str = ""
     dry_run: bool = False              # form filled + screenshotted but NOT submitted
+    challenge: bool = False            # a CAPTCHA/login wall blocked the submit
 
 
 @dataclass
@@ -147,10 +152,114 @@ class ApplierAdapter(ABC):
                     return True
             if el_type == "file":
                 return False  # handled by upload helpers
-            await el.fill(str(value))
+            await self._human_type(el, str(value))
             return True
         except Exception:
             return False
+
+    # ------------------------------------------------------------------
+    # Humanized input (T0)
+    # ------------------------------------------------------------------
+
+    async def _human_type(self, locator, value: str) -> bool:
+        """Fill a text control with human-like typing (or instant fill when
+        APPLY_HUMANIZED is off). The occasional wrong-key-and-backspace
+        keeps behavioural fingerprinting from flagging a perfect typist."""
+        if not settings.apply_humanized:
+            await locator.fill(str(value))
+            return True
+        try:
+            await locator.click()
+            await locator.fill("")
+            await locator.type(str(value), delay=random.randint(35, 95))
+            if random.random() < 0.04 and len(str(value)) > 6:
+                await locator.press("Backspace")
+                await locator.type(str(value)[-1], delay=random.randint(35, 80))
+            try:
+                return await locator.input_value() == str(value)
+            except Exception:
+                return True
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------
+    # Post-submit truth (T1)
+    # ------------------------------------------------------------------
+
+    async def detect_submission_state(self, page, before_url: str, timeout_ms: int = 7000) -> str:
+        """Classify the page state after clicking submit.
+
+        Returns 'success' | 'validation_error' | 'challenge' | 'unknown'.
+        Only 'success' may ever be recorded as an applied application.
+        """
+        # 1) Captcha frames are an instant giveaway
+        try:
+            for frame in page.frames:
+                src = frame.url or ""
+                if any(m in src for m in ("recaptcha", "hcaptcha", "challenges.cloudflare", "turnstile")):
+                    return "challenge"
+        except Exception:
+            pass
+
+        success = False
+        error = False
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while time.monotonic() < deadline:
+            try:
+                url = page.url
+                if url != before_url and "error" not in url.lower():
+                    success = True
+                body = await page.evaluate(
+                    "() => document.body ? document.body.innerText.slice(0, 8000) : ''"
+                )
+                low = (body or "").lower()
+                if any(w in low for w in (
+                    "thank you", "application received", "we have received",
+                    "submitted successfully", "application complete",
+                    "your application has been",
+                )):
+                    success = True
+                if any(w in low for w in (
+                    "please fix", "please correct", "please enter", "please select",
+                    "invalid", "something went wrong", "unable to submit",
+                    "required field", "validation",
+                )):
+                    error = True
+                if success and not error:
+                    return "success"
+                if error:
+                    return "validation_error"
+                if await page.locator(
+                    "iframe[src*='recaptcha'], iframe[src*='hcaptcha'], "
+                    "iframe[src*='challenges.cloudflare'], #turnstile-wrapper, "
+                    ".g-recaptcha, .h-captcha, #datadome"
+                ).count():
+                    return "challenge"
+            except Exception:
+                pass
+            await page.wait_for_timeout(400)
+        if success:
+            return "success"
+        if error:
+            return "validation_error"
+        return "unknown"
+
+    async def _first_validation_error(self, page) -> str:
+        """Grab the first on-page validation error message, if any."""
+        try:
+            return await page.evaluate("""() => {
+                const sels = ['[role="alert"]', '.error', '.validation-error',
+                              '.field-error', '.invalid-feedback', 'input:invalid'];
+                for (const s of sels) {
+                    for (const el of document.querySelectorAll(s)) {
+                        const t = (el.innerText || el.value || el.title || '').trim();
+                        if (t && t.length > 2) return t.slice(0, 220);
+                    }
+                }
+                return '';
+            }""")
+        except Exception:
+            return ""
 
     async def _upload(self, page, selector: str, path: Optional[str]) -> bool:
         if not path:
@@ -166,9 +275,40 @@ class ApplierAdapter(ABC):
 
 
 async def launch_browser(headless: bool = True):
-    """Launch chromium, falling back to installed Chrome when Playwright
-    browser binaries are missing."""
+    """Launch a browser for one apply session.
+
+    When HYPERBROWSER_API_KEY is set, a managed cloud session is created
+    via the Hyperbrowser REST API and we connect over CDP (stealth + proxy
+    rotation handled server-side). Otherwise local Chromium is launched.
+
+    Returns (playwright, browser). In Hyperbrowser mode the session id is
+    attached to the browser as ``_hb_session_id`` so the caller can stop
+    the session; on any failure we fall back to local Chromium.
+    """
     from playwright.async_api import async_playwright
+
+    if settings.hyperbrowser_api_key:
+        from backend.services.applier.stealth import (
+            create_hyperbrowser_session, stop_hyperbrowser_session,
+        )
+        session = await create_hyperbrowser_session()
+        if session and session.get("ws_endpoint"):
+            p = None
+            try:
+                print(f"[+] Hyperbrowser session {session['id']} — live view: {session.get('live_url')}")
+                p = await async_playwright().start()
+                browser = await p.chromium.connect_over_cdp(session["ws_endpoint"])
+                browser._hb_session_id = session["id"]
+                browser._hb_live_url = session.get("live_url")
+                return p, browser
+            except Exception as e:
+                print(f"[-] Hyperbrowser CDP connect failed ({e}) — falling back to local Chromium.")
+                if p is not None:
+                    try:
+                        await p.stop()
+                    except Exception:
+                        pass
+                await stop_hyperbrowser_session(session["id"])
 
     p = await async_playwright().start()
     launch_args = {"headless": headless, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}

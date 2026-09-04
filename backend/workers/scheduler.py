@@ -87,6 +87,28 @@ async def process_queue(ctx: dict) -> dict:
     if not jobs:
         return {"status": "ok", "enqueued": 0}
 
+    # T4: prioritise domains with a proven auto-apply track record so the
+    # queue spends its daily cap where it actually converts.
+    try:
+        from urllib.parse import urlparse
+        stats = await repo.get_domain_apply_stats(limit=100)
+        rate: dict = {}
+        for r in stats:
+            applied = r.get("applied") or 0
+            failed = r.get("failed") or 0
+            total = applied + failed
+            rate[r["domain"]] = applied / total if total else 0.5
+
+        def _host(url: str) -> str:
+            try:
+                return urlparse(url or "").netloc
+            except Exception:
+                return ""
+
+        jobs.sort(key=lambda j: rate.get(_host(getattr(j, "url", "")), 0.5), reverse=True)
+    except Exception:
+        pass
+
     redis = ctx.get("redis")
     enqueued = 0
     requeued_stale = 0

@@ -53,6 +53,30 @@ class Settings:
     resume_path: str = field(default_factory=lambda: os.getenv("RESUME_PATH", "./data/resume.pdf"))
     screenshot_dir: str = field(default_factory=lambda: os.getenv("SCREENSHOT_DIR", "./data/screenshots"))
 
+    # Smart-agent hardening (see .agent/implementation/SMART_AGENT_SPEC.md)
+    apply_humanized: bool = field(default_factory=lambda: _env_bool("APPLY_HUMANIZED", True))
+    apply_reuse_session: bool = field(default_factory=lambda: _env_bool("APPLY_REUSE_SESSION", True))
+    apply_session_dir: str = field(default_factory=lambda: os.getenv("APPLY_SESSION_DIR", "./data/sessions"))
+    apply_max_steps: int = field(default_factory=lambda: int(os.getenv("APPLY_MAX_STEPS", "10")))
+    apply_auto_repair: bool = field(default_factory=lambda: _env_bool("APPLY_AUTO_REPAIR", True))
+    apply_pace_seconds: int = field(default_factory=lambda: int(os.getenv("APPLY_PACE_SECONDS", "45")))
+
+    # Proxies / managed browser (T4 — see .agent/implementation/SMART_AGENT_SPEC.md)
+    # PROXY_URLS: comma-separated http(s) proxy URLs, one per browser session
+    # (works with any residential/rotating proxy provider).
+    apply_proxy_urls: list = field(
+        default_factory=lambda: [
+            u.strip() for u in os.getenv("PROXY_URLS", "").split(",") if u.strip()
+        ]
+    )
+    # Proxy pool behaviour: a proxy is cooled down (skipped) after this many
+    # consecutive failed sessions, for this long. All-cooldown -> direct.
+    apply_proxy_fail_threshold: int = field(default_factory=lambda: int(os.getenv("APPLY_PROXY_FAIL_THRESHOLD", "3")))
+    apply_proxy_cooldown_seconds: int = field(default_factory=lambda: int(os.getenv("APPLY_PROXY_COOLDOWN_SECONDS", "600")))
+    # Optional managed anti-bot sessions (Hyperbrowser) — replaces local
+    # Chromium entirely when the SDK is installed and a key is set.
+    hyperbrowser_api_key: str = field(default_factory=lambda: os.getenv("HYPERBROWSER_API_KEY", ""))
+
     # Admin
     admin_password: str = field(default_factory=lambda: os.getenv("ADMIN_PASSWORD", ""))
     admin_totp_secret: str = field(default_factory=lambda: os.getenv("ADMIN_TOTP_SECRET", ""))

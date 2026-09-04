@@ -80,7 +80,8 @@ class WorkdayAdapter(ApplierAdapter):
             return result
 
         # Workday's multi-step flow is tenant-specific; attempt a generic
-        # "next/submit" click and mark success only if the form advanced.
+        # "next/submit" click and verify the outcome instead of assuming it.
+        before_url = page.url
         try:
             clicked = False
             for selector in ["button[data-automation-id='bottom-navigation-next-button']",
@@ -99,11 +100,22 @@ class WorkdayAdapter(ApplierAdapter):
                 result.error = "workday submit/next button not found — flow is tenant-specific"
                 return result
 
-            await page.wait_for_timeout(3000)
+            state = await self.detect_submission_state(page, before_url)
             shot2 = await self._screenshot(page, ctx, "workday_after_submit")
             result.screenshot_url = shot2 or screenshot
-            result.success = True
-            result.applied_via = "form"
+            if state == "challenge":
+                result.success = False
+                result.challenge = True
+                result.error = "human verification required (captcha/login wall)"
+            elif state == "validation_error":
+                result.success = False
+                result.error = "submission validation error: " + (await self._first_validation_error(page) or "see screenshot")
+            elif state == "success":
+                result.success = True
+                result.applied_via = "form"
+            else:
+                result.success = False
+                result.error = "submission outcome unknown — verify via email"
         except Exception as e:
             result.success = False
             result.error = f"submit failed: {e}"

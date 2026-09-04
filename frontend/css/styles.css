@@ -892,6 +892,35 @@ body::before {
     }
 }
 
+/* Domain analytics table (T4) */
+.analytics-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    margin-top: 6px;
+}
+
+.analytics-table th,
+.analytics-table td {
+    text-align: left;
+    padding: 4px 12px 4px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.analytics-table th {
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.analytics-table .rate-good {
+    color: var(--success);
+}
+
+.analytics-table .rate-bad {
+    color: var(--error);
+}
+
 /* ============================================
    SCROLLBAR
    ============================================ */
