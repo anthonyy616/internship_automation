@@ -403,8 +403,20 @@ def test_hyperbrowser_session_creation_payload():
     assert call.kwargs["headers"]["x-api-key"] == "test-key"
     body = call.kwargs["json"]
     assert body["useStealth"] is True
-    assert body["useProxy"] is True
     assert body["acceptCookies"] is True
+    # useProxy is opt-in (free plan rejects it with 402), so by default it
+    # must NOT be in the payload.
+    assert "useProxy" not in body
+
+    # With the env flag on, useProxy is included.
+    with patch.object(stealth, "HYPERBROWSER_USE_PROXY", True), \
+         patch.object(settings, "hyperbrowser_api_key", "test-key"), \
+         patch("httpx.AsyncClient", FakeACMQ):
+        fake_client.post.reset_mock()
+        result2 = asyncio.run(stealth.create_hyperbrowser_session())
+    assert result2["id"] == "sess-1"
+    body2 = fake_client.post.call_args.kwargs["json"]
+    assert body2["useProxy"] is True
     assert body["timeoutMinutes"] == stealth.HYPERBROWSER_TIMEOUT_MINUTES
 
 

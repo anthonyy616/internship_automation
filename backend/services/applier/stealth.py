@@ -331,6 +331,10 @@ BANNER_BUTTON_TEXTS = (
 
 HYPERBROWSER_API_BASE = "https://api.hyperbrowser.ai/api"
 HYPERBROWSER_TIMEOUT_MINUTES = int(os.getenv("HYPERBROWSER_TIMEOUT_MINUTES", "30"))
+# Hyperbrowser routes sessions through their rotating proxy pool when this is
+# on. NOTE: their Free plan rejects useProxy with HTTP 402 — leave off unless
+# your plan supports proxies (see HYPERBROWSER_USE_PROXY in .env).
+HYPERBROWSER_USE_PROXY = os.getenv("HYPERBROWSER_USE_PROXY", "false").strip().lower() not in ("", "0", "false", "no")
 
 
 async def create_hyperbrowser_session() -> Optional[Dict]:
@@ -343,20 +347,32 @@ async def create_hyperbrowser_session() -> Optional[Dict]:
     key = settings.hyperbrowser_api_key
     if not key:
         return None
+    import httpx
     try:
-        import httpx
+        payload = {
+            "useStealth": True,
+            "acceptCookies": True,
+            "screen": {"width": 1440, "height": 900},
+            "timeoutMinutes": HYPERBROWSER_TIMEOUT_MINUTES,
+        }
+        if HYPERBROWSER_USE_PROXY:
+            payload["useProxy"] = True
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 f"{HYPERBROWSER_API_BASE}/session",
                 headers={"x-api-key": key, "Content-Type": "application/json"},
-                json={
-                    "useStealth": True,
-                    "useProxy": True,
-                    "acceptCookies": True,
-                    "screen": {"width": 1440, "height": 900},
-                    "timeoutMinutes": HYPERBROWSER_TIMEOUT_MINUTES,
-                },
+                json=payload,
             )
+            # Free plan rejects useProxy with 402 — retry without it rather
+            # than silently falling back to local Chromium.
+            if resp.status_code == 402 and payload.get("useProxy"):
+                print("[-] Hyperbrowser: plan does not allow proxies — retrying without useProxy.")
+                payload.pop("useProxy", None)
+                resp = await client.post(
+                    f"{HYPERBROWSER_API_BASE}/session",
+                    headers={"x-api-key": key, "Content-Type": "application/json"},
+                    json=payload,
+                )
             if resp.status_code != 200:
                 print(f"[-] Hyperbrowser session creation failed: HTTP {resp.status_code} {resp.text[:200]}")
                 return None

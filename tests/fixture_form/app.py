@@ -8,6 +8,8 @@ the whole apply pipeline can be exercised without touching real sites:
                 -> thank-you (with combobox, date, consent, honeypot)
     /shadow     form rendered inside an (open) shadow DOM root
     /slow       form that only renders 2s after page load
+    /apply-button  form hidden behind an "Apply for this position" button
+                (modal) — the remotive.com pattern
     /captcha    submit is answered with a reCAPTCHA-style challenge
     /blocked    main document returns HTTP 403
     /form-ok    single-page form that always confirms on submit
@@ -164,6 +166,36 @@ async def slow_form():
 
 
 # ----------------------------------------------------------------------
+# Form hidden behind an "Apply for this position" button (remotive pattern)
+# ----------------------------------------------------------------------
+
+APPLY_BUTTON_HTML = """
+<p>This is the job posting. The form appears once you click Apply.</p>
+<button id="apply-btn" onclick="document.getElementById('modal').style.display='block'">
+  Apply for this position
+</button>
+<div id="modal" style="display:none">
+  <form method="post" action="/apply-button">
+    <label>Full name</label><input name="full_name" required>
+    <label>Email</label><input name="email" type="email" required>
+    <label><input type="checkbox" name="consent" required> I agree to the terms and conditions</label>
+    <button type="submit">Submit Application</button>
+  </form>
+</div>
+"""
+
+
+@app.get("/apply-button", response_class=HTMLResponse)
+async def apply_button_get():
+    return _page("Apply button form", APPLY_BUTTON_HTML)
+
+
+@app.post("/apply-button", response_class=HTMLResponse)
+async def apply_button_post():
+    return _page("Application received", THANKYOU_BODY)
+
+
+# ----------------------------------------------------------------------
 # Challenge wall (reCAPTCHA-style) after submit
 # ----------------------------------------------------------------------
 
@@ -203,6 +235,11 @@ async def blocked():
 # ----------------------------------------------------------------------
 
 _SINGLE = """
+<!-- Hidden decoy submit inside a closed modal — must NEVER be matched
+     (regression: remotive's dead-link-report modal "Submit" button). -->
+<div id="deadlink-modal" style="display:none">
+  <button type="button">Submit</button>
+</div>
 <form method="post" action="{action}">
   <label>Full name</label><input name="full_name" required>
   <label>Email</label><input name="email" type="email" required>

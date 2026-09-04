@@ -113,13 +113,14 @@ async def main() -> int:
         return 0
 
     cases = [
-        ("/step1",    "success",   None),
-        ("/shadow",   "success",   None),
-        ("/slow",     "success",   None),
-        ("/form-ok",  "success",   None),
-        ("/form-bad", "failed",    "validation"),
-        ("/captcha",  "challenge", None),
-        ("/blocked",  "failed",    "blocked"),
+        ("/step1",       "success",   None),
+        ("/shadow",      "success",   None),
+        ("/slow",        "success",   None),
+        ("/apply-button", "success",  None),
+        ("/form-ok",     "success",   None),
+        ("/form-bad",    "failed",    "validation"),
+        ("/captcha",     "challenge", None),
+        ("/blocked",     "failed",    "blocked"),
     ]
 
     failures = 0

@@ -91,7 +91,9 @@ class TieredApplier:
                 # Managed cloud session: stealth/proxy/screen are configured
                 # server-side at session creation, so drive the session's own
                 # default context instead of layering local options on top.
-                context = browser.contexts()[0] if browser.contexts() else await browser.new_context()
+                # NOTE: browser.contexts is a property (a list), NOT a method.
+                contexts = browser.contexts
+                context = contexts[0] if contexts else await browser.new_context()
                 page = await context.new_page()
             else:
                 # Proxy pool (T4): one rotating proxy per session, skipped

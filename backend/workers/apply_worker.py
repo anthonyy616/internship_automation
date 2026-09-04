@@ -51,19 +51,39 @@ _TRANSIENT_MARKERS = (
     "navigation failed", "net::", "timeout", "connection reset",
 )
 
+# Cap the transient retry loop: after this many tries the job fails
+# honestly instead of bouncing in arq's retry queue forever.
+MAX_TRANSIENT_RETRIES = 3
+
+
+def _should_retry(ctx: dict) -> bool:
+    return int(ctx.get("job_try", 1) or 1) <= MAX_TRANSIENT_RETRIES
+
 
 def _is_transient(error: str) -> bool:
     low = (error or "").lower()
     return any(m in low for m in _TRANSIENT_MARKERS)
 
 
-def _raise_retry(ctx: dict):
+def _raise_retry(ctx: dict, error: str = ""):
     """Re-queue this job with exponential backoff via arq Retry (bounded
-    by arq's max_tries, so it can never retry forever)."""
+    by arq's max_tries, so it can never retry forever). The underlying
+    error is logged so the retry isn't a silent loop."""
     from arq.worker import Retry
     tries = int(ctx.get("job_try", 1) or 1)
     defer = min(60 * (2 ** (tries - 1)), 600)
-    print(f"[apply] transient failure — retry #{tries} in {defer}s")
+    logger = ctx.get("event_logger")
+    if logger is not None:
+        try:
+            import asyncio
+            asyncio.get_event_loop().create_task(
+                logger.warning(
+                    f"transient failure (retry #{tries} in {defer}s): {error[:200]}"
+                )
+            )
+        except Exception:
+            pass
+    print(f"[apply] transient failure — retry #{tries} in {defer}s ({error[:120]})")
     raise Retry(defer=defer)
 
 
@@ -150,15 +170,21 @@ async def apply_to_job(ctx: dict, job_id: str) -> dict:
         await _mark_apply_done(ctx, host)
 
         # Transient (blocked / network) — arq requeues with backoff instead
-        # of marking the job permanently failed.
+        # of marking the job permanently failed. Bounded: after N tries it
+        # falls through to the honest failure path below.
         if not result.success and _is_transient(getattr(result, "error", "")):
-            _raise_retry(ctx)
+            if _should_retry(ctx):
+                _raise_retry(ctx, getattr(result, "error", ""))
 
         if getattr(result, "challenge", False):
             # CAPTCHA / login wall — pause and ask the operator to solve it
             # in a real browser (their answer resumes the application).
             await repo.save_filled_fields(app_id, dict(result.filled_fields))
             await repo.update_application_status(app_id, "paused_awaiting_input")
+            # Mark the JOB paused too — otherwise the stale-applying recovery
+            # re-enqueues it every ~20 min, re-opening a paid browser session
+            # each cycle for the same unanswered challenge.
+            await repo.update_job_status(job_id, "paused_awaiting_input")
             try:
                 await repo.create_confirmation(
                     application_id=app_id,
@@ -185,6 +211,9 @@ async def apply_to_job(ctx: dict, job_id: str) -> dict:
             # Category-A question hit — save progress and pause for the user
             await repo.save_filled_fields(app_id, dict(result.filled_fields))
             await repo.update_application_status(app_id, "paused_awaiting_input")
+            # Same as the challenge branch: keep the job paused so the stale
+            # recovery can't re-open paid sessions for an unanswered question.
+            await repo.update_job_status(job_id, "paused_awaiting_input")
             await logger.escalated(
                 "apply", "paused_awaiting_input",
                 application_id=app_id,
@@ -252,8 +281,15 @@ async def apply_to_job(ctx: dict, job_id: str) -> dict:
             )
             return {"status": "failed", "reason": getattr(result, "error", "")}
     except Exception as e:
-        if _is_transient(str(e)):
-            _raise_retry(ctx)
+        # arq's Retry is an Exception subclass — a Retry raised by the
+        # transient-failure path above would otherwise be swallowed here,
+        # marking the job failed instead of re-queueing with backoff.
+        # Re-raise it so arq schedules the retry.
+        from arq.worker import Retry
+        if isinstance(e, Retry):
+            raise
+        if _is_transient(str(e)) and _should_retry(ctx):
+            _raise_retry(ctx, str(e))
         await repo.update_application_status(app_id, "failed")
         await repo.update_job_status(job_id, "failed_needs_manual")
         await logger.failed(

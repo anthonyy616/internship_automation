@@ -245,15 +245,23 @@ class ApplierAdapter(ABC):
         return "unknown"
 
     async def _first_validation_error(self, page) -> str:
-        """Grab the first on-page validation error message, if any."""
+        """Grab the first on-page validation error message, if any.
+
+        ATSs render errors in many ways (role=alert, .error, inline
+        messages, toast banners, browser validation bubbles on invalid
+        inputs) — scan broadly so the operator gets the real message
+        instead of "see screenshot"."""
         try:
-            return await page.evaluate("""() => {
+            return await page.evaluate(r"""() => {
                 const sels = ['[role="alert"]', '.error', '.validation-error',
-                              '.field-error', '.invalid-feedback', 'input:invalid'];
+                              '.field-error', '.invalid-feedback', '.error-message',
+                              '.error-msg', '[class*="error"]:not([class*="error-"]), ' +
+                              'input:invalid', 'select:invalid', 'textarea:invalid',
+                              '[role="status"]', '.toast', '.notification'];
                 for (const s of sels) {
                     for (const el of document.querySelectorAll(s)) {
-                        const t = (el.innerText || el.value || el.title || '').trim();
-                        if (t && t.length > 2) return t.slice(0, 220);
+                        const t = (el.innerText || el.value || el.title || el.placeholder || '').trim();
+                        if (t && t.length > 2 && !/^\s*$/.test(t)) return t.slice(0, 220);
                     }
                 }
                 return '';

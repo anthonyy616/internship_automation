@@ -365,23 +365,72 @@ class GenericApplier(ApplierAdapter):
             pass
         return False
 
+    async def _click_apply_button(self, page) -> bool:
+        """Click a visible "Apply" / "Apply for this position" button that
+        reveals a modal/embedded form (remotive, jobicy, most job boards).
+
+        Many job pages render the actual form only after the Apply button is
+        clicked — previously those pages failed with "no visible form fields".
+        Known-ATS links are left for _click_ats_link; here we prefer buttons
+        (which open in-page modals) over anchors (which navigate away).
+        """
+        APPLY_RE = re.compile(r"apply\s*(for this position|now|here|today)?\s*$", re.I)
+        ATS_HINTS = (
+            "lever.co", "greenhouse.io", "ashbyhq.com", "workdayjobs",
+            "smartrecruiters", "workable.com", "recruitee", "bamboohr",
+        )
+        try:
+            for p in list(page.context.pages) or [page]:
+                for frame in p.frames:
+                    for sel in ("button", "a"):
+                        try:
+                            loc = frame.locator(sel).filter(has_text=APPLY_RE)
+                            total = await loc.count()
+                            for i in range(min(total, 6)):
+                                candidate = loc.nth(i)
+                                try:
+                                    if not await candidate.is_visible():
+                                        continue
+                                    href = await candidate.get_attribute("href") or ""
+                                    if any(h in href for h in ATS_HINTS):
+                                        continue  # handled by _click_ats_link
+                                    await candidate.click(timeout=8000)
+                                    await page.wait_for_timeout(2500)
+                                    return True
+                                except Exception:
+                                    continue
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+        return False
+
     # ------------------------------------------------------------------
     # Button finding
     # ------------------------------------------------------------------
 
     async def _find_button(self, page, texts: tuple):
-        """Find the first button whose text matches any of `texts`,
-        searching every frame. Returns a locator or None."""
-        for frame in page.frames:
-            for text in texts:
-                try:
-                    locator = frame.locator(
-                        f"button:has-text('{text}'), input[type='submit'][value*='{text}']"
-                    ).first
-                    if await locator.count():
-                        return locator
-                except Exception:
-                    continue
+        """Find the first VISIBLE button whose text matches any of `texts`,
+        searching every page in the context (popups included) and every
+        frame. Returns a locator or None.
+
+        Visibility filtering is essential: job-board pages are littered with
+        hidden "Submit"/"Apply" buttons inside closed modals (e.g. Remotive's
+        dead-link-report modal), and matching those turns submission into a
+        click-on-an-invisible-element timeout.
+        """
+        for p in list(page.context.pages) or [page]:
+            for frame in p.frames:
+                for text in texts:
+                    try:
+                        locator = frame.locator(
+                            f"button:visible:has-text('{text}'), "
+                            f"input[type='submit']:visible[value*='{text}']"
+                        ).first
+                        if await locator.count():
+                            return locator
+                    except Exception:
+                        continue
         return None
 
     async def _find_submit(self, page):
@@ -411,6 +460,11 @@ class GenericApplier(ApplierAdapter):
         if not visible:
             # Form may live on the ATS domain behind an "Apply" link
             if await self._click_ats_link(page):
+                await page.wait_for_timeout(1500)
+                visible = await self._find_visible_controls(page)
+        if not visible:
+            # ... or behind an in-page "Apply" button (modal/embedded form)
+            if await self._click_apply_button(page):
                 await page.wait_for_timeout(1500)
                 visible = await self._find_visible_controls(page)
         if not visible:
@@ -518,35 +572,45 @@ class GenericApplier(ApplierAdapter):
             next_btn = await self._find_button(page, NEXT_TEXTS)
 
             if submit_btn is not None and next_btn is None:
-                return await self._submit(page, ctx, result, before_url)
+                return await self._submit(page, ctx, result)
             if next_btn is not None:
+                # The step lives on the page that owns the button (may be a
+                # popup opened by the job board's Apply button).
+                step_page = next_btn.page
                 try:
                     await next_btn.click(timeout=10000)
                 except Exception as e:
                     result.success = False
                     result.error = f"next-step click failed: {e}"
                     return result
-                await page.wait_for_timeout(1200)
-                err = await self._first_validation_error(page)
+                await step_page.wait_for_timeout(1200)
+                err = await self._first_validation_error(step_page)
                 if err:
                     result.success = False
                     result.error = f"form validation on step {step}: {err}"
                     return result
                 continue
             if submit_btn is not None:
-                return await self._submit(page, ctx, result, before_url)
+                return await self._submit(page, ctx, result)
 
             result.success = False
             result.error = "submit/next button not found"
             return result
 
-    async def _submit(self, page, ctx, result: ApplyResult, before_url: str) -> ApplyResult:
-        """Click submit and verify the outcome instead of assuming success."""
+    async def _submit(self, page, ctx, result: ApplyResult) -> ApplyResult:
+        """Click submit and verify the outcome instead of assuming success.
+
+        The form (and its post-submit confirmation) may live in a popup
+        opened by the job board — the submit button's own page is used for
+        verification, never the original page.
+        """
         submit = await self._find_button(page, SUBMIT_TEXTS)
         if submit is None:
             result.success = False
             result.error = "submit button not found"
             return result
+        form_page = submit.page
+        before_url = form_page.url
         try:
             await submit.click(timeout=10000)
         except Exception as e:
@@ -554,8 +618,8 @@ class GenericApplier(ApplierAdapter):
             result.error = f"submit failed: {e}"
             return result
 
-        state = await self.detect_submission_state(page, before_url)
-        shot2 = await self._screenshot(page, ctx, "generic_after_submit")
+        state = await self.detect_submission_state(form_page, before_url)
+        shot2 = await self._screenshot(form_page, ctx, "generic_after_submit")
         result.screenshot_url = shot2 or result.screenshot_url
 
         if state == "challenge":
@@ -566,7 +630,7 @@ class GenericApplier(ApplierAdapter):
         if state == "validation_error":
             result.success = False
             result.error = "submission validation error: " + (
-                await self._first_validation_error(page) or "see screenshot"
+                await self._first_validation_error(form_page) or "see screenshot"
             )
             return result
         if state == "success":

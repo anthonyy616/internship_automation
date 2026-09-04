@@ -363,6 +363,34 @@ async def test_apply_worker_resumes_dry_run_and_filling_applications():
     assert repo.job_statuses["job-1"] == "applied"
 
 
+async def test_apply_worker_transient_failure_retries_not_fails():
+    """A transient (blocked/network) failure must re-queue with backoff via
+    arq Retry — never mark the job failed. This guards the bug where the
+    broad `except Exception` swallowed arq's Retry and turned a retryable
+    failure into a permanent failed_needs_manual."""
+    from arq.worker import Retry
+
+    repo = FakeRepo()
+    job = FakeJob("job-1", url="https://example.com/job-1")
+    repo.jobs["job-1"] = job
+    ctx = build_ctx(
+        repo=repo, registry=FakeRegistry([]),
+        applier=StubApplier(success=False, error="blocked by site (HTTP 403)"),
+    )
+    ctx["job_try"] = 1
+
+    try:
+        await apply_to_job(ctx, "job-1")
+    except Retry as retry:
+        assert retry.defer_score > 0, "backoff must be positive"
+    else:
+        raise AssertionError("expected arq Retry to be raised for a transient failure")
+
+    # The job must NOT be marked failed — it is waiting for the retry.
+    assert repo.job_statuses.get("job-1") in (None, "applying"), repo.job_statuses.get("job-1")
+    assert repo.app_statuses.get("app-1") in (None, "filling"), repo.app_statuses.get("app-1")
+
+
 async def test_apply_worker_escalates_challenge_and_pauses():
     repo = FakeRepo()
     job = FakeJob("job-1", url="https://example.com/job-1")
@@ -375,6 +403,8 @@ async def test_apply_worker_escalates_challenge_and_pauses():
     assert result["status"] == "paused"
     assert result["reason"] == "challenge"
     assert repo.app_statuses["app-1"] == "paused_awaiting_input"
+    assert repo.job_statuses["job-1"] == "paused_awaiting_input", \
+        "job must be paused too so stale-recovery can't re-open paid sessions"
     assert any(c.field_type == "challenge" for c in repo.confirmations), "challenge confirmation must be created"
     escalated = [e for e in ctx["event_logger"].events if e["action"] == "challenge_escalated"]
     assert len(escalated) == 1
@@ -431,6 +461,7 @@ def main():
         test_apply_worker_failure_transitions,
         test_apply_worker_dry_run_is_not_recorded_as_applied,
         test_apply_worker_resumes_dry_run_and_filling_applications,
+        test_apply_worker_transient_failure_retries_not_fails,
         test_apply_worker_escalates_challenge_and_pauses,
         test_apply_worker_respects_daily_limit,
         test_email_worker_without_sender_is_pending_not_sent,
