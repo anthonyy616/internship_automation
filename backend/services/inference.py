@@ -4,6 +4,7 @@ Uses LLM to map form fields to the user's bio-data map.
 """
 
 import json
+import logging
 from typing import Dict, Any, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -11,14 +12,26 @@ from langchain_core.output_parsers import JsonOutputParser
 
 from backend.config import settings
 
+logger = logging.getLogger(__name__)
+
+
 class InferenceEngine:
+    """
+    LLM-based form-field mapper.
+
+    Failures are never fatal: `map_form_fields` returns {} on any error and
+    records the reason in `self.last_error` so callers can surface it (e.g.
+    "OpenAI credits exhausted") instead of the bot silently going blind.
+    """
+
     def __init__(self):
         self.llm = ChatOpenAI(
-            model="gpt-4o",
+            model=settings.openai_model,
             temperature=0.0,
             api_key=settings.openai_api_key
         )
-        
+        self.last_error: Optional[str] = None
+
     def map_form_fields(self, form_html: str, user_data_keys: List[str]) -> Dict[str, str]:
         """
         Analyzes a form's HTML (simplified) and maps inputs to user profile keys.
@@ -43,15 +56,17 @@ class InferenceEngine:
         ])
         
         chain = prompt | self.llm | JsonOutputParser()
-        
+
         try:
             result = chain.invoke({
                 "user_keys": ", ".join(user_data_keys),
                 "form_html": form_html
             })
-            return result
+            self.last_error = None
+            return result or {}
         except Exception as e:
-            print(f"Inference Error: {e}")
+            self.last_error = str(e)
+            logger.error("Inference Error: %s", e)
             return {}
 
 # Global instance

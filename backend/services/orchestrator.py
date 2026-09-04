@@ -81,6 +81,16 @@ class Orchestrator:
         pool = await self._get_pool()
         await pool.enqueue_job("apply_to_job", job_id)
 
+    async def enqueue_process_queue(self) -> int:
+        """Enqueue an immediate queue drain (apply everything waiting).
+        Returns 1 when enqueued, 0 when Redis is unreachable."""
+        try:
+            pool = await self._get_pool()
+            await pool.enqueue_job("process_queue_now")
+            return 1
+        except Exception:
+            return 0
+
     async def enqueue_email(self, application_id: str):
         pool = await self._get_pool()
         await pool.enqueue_job("send_email", application_id)
@@ -101,12 +111,16 @@ class Orchestrator:
 
         cmd = [sys.executable, "-m", "arq", "backend.workers.settings.WorkerSettings"]
         try:
+            # Inherit stdio (no DEVNULL): the worker's logs/prints appear in
+            # the same terminal as the server, so the operator sees exactly
+            # what the bot is doing.
             self._worker_proc = subprocess.Popen(
                 cmd,
                 cwd=str(PROJECT_ROOT),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=None,
+                stderr=None,
             )
+            print("[+] arq worker spawned — its logs now stream to this terminal.")
             return True
         except Exception as e:
             print(f"[-] Failed to start worker: {e}")

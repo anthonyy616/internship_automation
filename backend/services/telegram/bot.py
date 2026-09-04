@@ -95,6 +95,14 @@ class TelegramBot:
     # Confirmation delivery
     # ------------------------------------------------------------------
 
+    async def notify(self, text: str) -> bool:
+        """Send a plain operator message (e.g. "application submitted") to
+        the configured chat. Returns True when delivered."""
+        if not self.enabled():
+            return False
+        message_id = await self._send(str(self.chat_id), text)
+        return message_id is not None
+
     async def send_confirmation(self, conf) -> bool:
         """Send one confirmation question and record the Telegram message id."""
         if self.repo is None or not self.enabled():

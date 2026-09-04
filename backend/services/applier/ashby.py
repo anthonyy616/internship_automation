@@ -135,6 +135,7 @@ class AshbyAdapter(ApplierAdapter):
 
         if ctx.dry_run:
             result.success = True
+            result.dry_run = True
             result.error = "dry_run"
             return result
 

@@ -695,6 +695,204 @@ body::before {
 }
 
 /* ============================================
+   STAT SUB / QUEUE BAR / ACTIVITY FEED
+   ============================================ */
+.stat-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+}
+
+.queue-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    padding: 14px 20px;
+    margin-bottom: 24px;
+    font-size: 13px;
+}
+
+.queue-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.queue-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-muted);
+}
+
+.queue-val {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.queue-val.q-alive {
+    color: var(--success);
+}
+
+.queue-val.q-dead {
+    color: var(--error);
+}
+
+.queue-val.q-dry {
+    color: var(--warning);
+}
+
+.queue-val.q-live {
+    color: var(--success);
+}
+
+/* Activity feed entries (agent events) */
+.activity-entry {
+    display: flex;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+    animation: slideIn 0.2s ease;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    align-items: flex-start;
+}
+
+.activity-entry:last-child {
+    border-bottom: none;
+}
+
+.activity-icon {
+    flex-shrink: 0;
+    min-width: 18px;
+    text-align: center;
+}
+
+.activity-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.activity-line {
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.activity-entry.started .activity-line {
+    color: var(--info);
+}
+
+.activity-entry.success .activity-line {
+    color: var(--success);
+}
+
+.activity-entry.failed {
+    background: rgba(239, 68, 68, 0.06);
+    border-left: 3px solid var(--error);
+    padding-left: 8px;
+}
+
+.activity-entry.failed .activity-line {
+    color: var(--error);
+}
+
+.activity-entry.escalated {
+    border-left: 3px solid var(--accent-secondary);
+    padding-left: 8px;
+}
+
+.activity-error {
+    color: var(--error);
+    font-size: 12px;
+    margin-top: 3px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 60px;
+    overflow-y: auto;
+    opacity: 0.9;
+}
+
+.activity-shot {
+    margin-top: 6px;
+    max-height: 110px;
+    max-width: 180px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    cursor: zoom-in;
+    display: block;
+}
+
+.activity-job-link {
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--info);
+}
+
+.status-cell {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* Job status badge variants (real statuses) */
+.status-badge {
+    background: rgba(148, 163, 184, 0.15);
+    color: var(--text-secondary);
+}
+
+.status-badge.discovered,
+.status-badge.filtered {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--info);
+}
+
+.status-badge.queued {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
+}
+
+.status-badge.applying {
+    background: rgba(14, 165, 233, 0.15);
+    color: #38bdf8;
+    animation: pulse 1.4s ease infinite;
+}
+
+.status-badge.applied {
+    background: rgba(16, 185, 129, 0.2);
+    color: var(--success);
+}
+
+.status-badge.dry_run {
+    background: rgba(139, 92, 246, 0.2);
+    color: var(--accent-secondary);
+}
+
+.status-badge.failed_needs_manual {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--error);
+}
+
+.status-badge.emailed {
+    background: rgba(139, 92, 246, 0.2);
+    color: var(--accent-secondary);
+}
+
+@keyframes pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.45;
+    }
+}
+
+/* ============================================
    SCROLLBAR
    ============================================ */
 ::-webkit-scrollbar {

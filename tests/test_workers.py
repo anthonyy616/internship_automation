@@ -86,6 +86,20 @@ class FakeRepo:
                 return a
         return None
 
+    async def claim_application(self, job_id, resumable_statuses):
+        """Mirror the DB's atomic per-job claim (see database.py)."""
+        existing = [a for a in self.applications.values() if a.job_id == job_id]
+        if existing:
+            app = existing[-1]
+            if app.status not in resumable_statuses:
+                return "skip", app
+            app.status = "filling"
+            return "proceed", app
+        app_id = f"app-{len(self.applications) + 1}"
+        app = FakeApplication(app_id, job_id)
+        self.applications[app_id] = app
+        return "proceed", app
+
     async def create_application(self, job_id):
         app_id = f"app-{len(self.applications) + 1}"
         app = FakeApplication(app_id, job_id)
@@ -249,9 +263,10 @@ async def test_apply_worker_no_applier_marks_needs_manual():
 
 
 class StubApplier:
-    def __init__(self, success=True, error=""):
+    def __init__(self, success=True, error="", dry_run=False):
         self.success = success
         self.error = error
+        self.dry_run = dry_run
 
     async def apply(self, job, application):
         class R:
@@ -262,6 +277,7 @@ class StubApplier:
         r.error = self.error
         r.needs_input = False
         r.filled_fields = {}
+        r.dry_run = self.dry_run
         return r
 
 
@@ -290,6 +306,39 @@ async def test_apply_worker_failure_transitions():
     # Failed applications land in the manual-review queue, not a dead end
     assert repo.job_statuses["job-1"] == "failed_needs_manual"
     assert repo.app_statuses["app-1"] == "failed"
+
+
+async def test_apply_worker_dry_run_is_not_recorded_as_applied():
+    repo = FakeRepo()
+    job = FakeJob("job-1", url="https://example.com/job-1")
+    repo.jobs["job-1"] = job
+    ctx = build_ctx(repo=repo, registry=FakeRegistry([]), applier=StubApplier(success=True, dry_run=True))
+
+    result = await apply_to_job(ctx, "job-1")
+
+    # A dry-run fill is evidence the form was filled, NOT proof of a real
+    # application — it must never be recorded as 'applied'.
+    assert result["status"] == "dry_run"
+    assert repo.job_statuses["job-1"] == "dry_run"
+    assert repo.app_statuses["app-1"] == "dry_run"
+    actions = [e["action"] for e in ctx["event_logger"].events]
+    assert "dry_run_completed" in actions
+    assert "applied" not in actions
+
+
+async def test_apply_worker_resumes_dry_run_and_filling_applications():
+    repo = FakeRepo()
+    job = FakeJob("job-1", url="https://example.com/job-1")
+    repo.jobs["job-1"] = job
+    repo.applications["app-1"] = FakeApplication("app-1", "job-1", "dry_run")
+    ctx = build_ctx(repo=repo, registry=FakeRegistry([]), applier=StubApplier(success=True))
+
+    result = await apply_to_job(ctx, "job-1")
+
+    # A previously dry-run-filled (or crashed) application can be re-applied
+    assert result["status"] == "applied"
+    assert repo.app_statuses["app-1"] == "applied"
+    assert repo.job_statuses["job-1"] == "applied"
 
 
 async def test_apply_worker_respects_daily_limit():
@@ -327,8 +376,11 @@ async def test_email_worker_without_sender_is_pending_not_sent():
 async def test_scheduler_imports_and_cron_exists():
     from backend.workers import settings as worker_settings
     assert worker_settings.WorkerSettings is not None
-    assert len(worker_settings.WorkerSettings.functions) == 3
+    # scrape_source, apply_to_job, send_email, process_queue_now
+    assert len(worker_settings.WorkerSettings.functions) == 4
     assert len(worker_settings.WorkerSettings.cron_jobs) == 2
+    names = [getattr(f, "__name__", None) for f in worker_settings.WorkerSettings.functions]
+    assert "process_queue_now" in names, names
 
 
 def main():
@@ -338,6 +390,8 @@ def main():
         test_apply_worker_no_applier_marks_needs_manual,
         test_apply_worker_success_transitions,
         test_apply_worker_failure_transitions,
+        test_apply_worker_dry_run_is_not_recorded_as_applied,
+        test_apply_worker_resumes_dry_run_and_filling_applications,
         test_apply_worker_respects_daily_limit,
         test_email_worker_without_sender_is_pending_not_sent,
         test_scheduler_imports_and_cron_exists,

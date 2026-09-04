@@ -64,10 +64,27 @@ async def lifespan(app: FastAPI):
         print(f"[-] Telegram bot failed to start: {e}")
         telegram_task = None
 
+    # Event bridge: the arq worker publishes events to Redis; this task
+    # subscribes and forwards them to every connected browser in real time.
+    bridge_task = None
+    try:
+        from backend.services.event_bridge import EventBridge
+        bridge = EventBridge(ws_manager)
+        bridge_task = asyncio.create_task(bridge.run())
+    except Exception as e:
+        print(f"[-] Event bridge failed to start: {e}")
+        bridge_task = None
+
     yield
 
     # Shutdown
     print("[*] Shutting down...")
+    if bridge_task is not None:
+        bridge_task.cancel()
+        try:
+            await bridge_task
+        except (asyncio.CancelledError, Exception):
+            pass
     if telegram_task is not None:
         telegram_task.cancel()
         try:
@@ -154,19 +171,57 @@ async def health_check():
 # ==================== BOT CONTROL ====================
 
 @app.post("/api/start")
-async def start_bot(request: dict):
+async def start_bot(request: Optional[dict] = None):
     """
-    Start the autonomous bot: spawn the arq worker subprocess and kick off
-    an immediate scrape of all enabled sources.
+    Start the autonomous bot from the dashboard: persist the form settings
+    (regions, contact email, daily caps, dry-run toggle), spawn the arq
+    worker, kick off an immediate scrape of all enabled sources, and drain
+    the apply queue right away so results appear within minutes.
+
+    The dashboard sends the whole form; older no-body callers still work
+    and just use whatever is already in the DB config.
     """
+    body = request or {}
+    try:
+        config = ConfigService()
+
+        if body.get("regions"):
+            await config.update_regions(list(body["regions"]))
+        if body.get("contact_email"):
+            await config.update_profile(email=str(body["contact_email"]).strip())
+        if body.get("portfolio_url") is not None:
+            await config.update_profile(portfolio_url=str(body["portfolio_url"]).strip())
+
+        limits_kwargs = {}
+        if body.get("max_applications") is not None:
+            limits_kwargs["max_applications_per_day"] = int(body["max_applications"])
+        if body.get("max_emails") is not None:
+            limits_kwargs["max_emails_per_day"] = int(body["max_emails"])
+        if limits_kwargs:
+            await config.update_limits(**limits_kwargs)
+
+        if "dry_run" in body:
+            # Unchecking the box in the browser turns on real submissions
+            await config.update("apply", {"dry_run": bool(body["dry_run"])})
+    except Exception as e:
+        return {
+            "success": False,
+            "worker_started": False,
+            "warning": f"Could not save dashboard settings: {e}",
+        }
+
     started = orchestrator.start_worker()
 
     enqueued = 0
+    drained = 0
     try:
         config = ConfigService()
         keywords = await config.get_keywords()
         regions = await config.get_regions()
         enqueued = await orchestrator.enqueue_scrape_all(keywords, regions)
+        # Drain discovered/filtered/queued jobs into the apply queue now,
+        # instead of waiting up to an hour for the cron sweep.
+        drained = await orchestrator.enqueue_process_queue()
     except Exception as e:
         return {
             "success": True,
@@ -180,6 +235,7 @@ async def start_bot(request: dict):
         "worker_started": started,
         "already_running": not started,
         "scrape_tasks_enqueued": enqueued,
+        "apply_tasks_enqueued": drained,
     }
 
 
@@ -194,56 +250,202 @@ async def stop_bot(request: Optional[dict] = None):
     }
 
 
-@app.get("/api/status")
-async def get_status():
-    """Get current bot status."""
-    worker_running = orchestrator.is_worker_running()
+@app.post("/api/jobs/{job_id}/apply")
+async def apply_to_job_now(job_id: str):
+    """
+    Force one job through the apply queue right now (used by the dashboard
+    "Apply" button). If a previous attempt failed, it is reset so the job
+    can be restarted-and-refilled.
+    """
     try:
         repo = get_repo()
-        job_stats = await repo.get_job_counts()
-        async with repo.pool.acquire() as conn:
-            app_count = await conn.fetchval("SELECT COUNT(*) FROM applications")
-            email_count = await conn.fetchval("SELECT COUNT(*) FROM emails WHERE sent_at IS NOT NULL")
+        job = await repo.get_job(job_id)
+        if job is None:
+            return JSONResponse({"error": "Job not found"}, status_code=404)
+
+        # A previous failed attempt would otherwise block a retry
+        existing = await repo.get_application_by_job(job_id)
+        if existing is not None and existing.status == "failed":
+            await repo.update_application_status(str(existing.id), "filling")
+
+        await repo.update_job_status(job_id, "queued")
+        try:
+            await orchestrator.enqueue_apply(job_id)
+            enqueued = True
+        except Exception:
+            # Redis down — the cron sweep will pick the queued job up later
+            enqueued = False
+
         return {
-            "status": "running" if worker_running else "idle",
-            "worker_running": worker_running,
-            "jobs_found": job_stats["total_jobs"],
-            "applications_sent": app_count or 0,
-            "emails_sent": email_count or 0,
+            "success": True,
+            "job_id": job_id,
+            "enqueued": enqueued,
+            "title": job.title,
+            "company": job.company,
         }
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def _worker_health() -> tuple:
+    """
+    Check the arq worker heartbeat in Redis.
+
+    Returns (alive: bool, health_text: Optional[str]). The worker re-sets
+    this key every 15s with a ~16s TTL (see backend/workers/settings.py),
+    so a dead worker is detected within seconds instead of the 1-hour
+    default arq health-check interval.
+    """
+    try:
+        pool = await orchestrator._get_pool()
+        value = await pool.get("job-agent:worker-health")
+        if not value:
+            return False, None
+        ttl = await pool.ttl("job-agent:worker-health")
+        if ttl is not None and ttl <= 0:
+            return False, None
+        text = value.decode() if isinstance(value, bytes) else str(value)
+        return True, text
     except Exception:
+        return False, None
+
+
+async def _status_payload() -> dict:
+    """Single source of truth for dashboard numbers.
+
+    'applications_sent' means REAL submissions only (submit was clicked).
+    Dry-run fills, failures and paused applications are reported as their
+    own numbers so the dashboard can never be mistaken for the truth.
+    """
+    repo = get_repo()
+    job_stats = await repo.get_job_counts()
+    apps = await repo.get_application_counts()
+    async with repo.pool.acquire() as conn:
+        email_count = await conn.fetchval("SELECT COUNT(*) FROM emails WHERE sent_at IS NOT NULL")
+
+    def c(status: str) -> int:
+        return apps.get(status, 0)
+
+    by_status = job_stats["jobs_by_status"]
+    awaiting = sum(by_status.get(s, 0) for s in ("discovered", "filtered", "queued"))
+
+    return {
+        "jobs_found": job_stats["total_jobs"],
+        "awaiting": awaiting,
+        "applications_sent": c("applied"),
+        "dry_run_completed": c("dry_run"),
+        "paused_awaiting_input": c("paused_awaiting_input"),
+        "attempts_failed": c("failed"),
+        "in_progress": c("filling") + sum(by_status.get(s, 0) for s in ("applying",)),
+        "emails_sent": email_count or 0,
+    }
+
+
+@app.get("/api/status")
+async def get_status():
+    """Get current bot status and honest pipeline numbers."""
+    spawned = orchestrator.is_worker_running()
+    alive, health_text = await _worker_health()
+    worker_running = spawned or alive
+    try:
+        payload = await _status_payload()
+        payload.update(
+            {
+                "status": "running" if worker_running else "idle",
+                "worker_running": worker_running,
+                "worker_spawned": spawned,
+                "worker_heartbeat": health_text,
+            }
+        )
+        return payload
+    except Exception as e:
         return {
             "status": "running" if worker_running else "idle",
             "worker_running": worker_running,
+            "worker_spawned": spawned,
             "jobs_found": 0,
             "applications_sent": 0,
+            "dry_run_completed": 0,
             "emails_sent": 0,
+            "error": str(e),
         }
+
+
+@app.get("/api/queue")
+async def get_queue_status():
+    """What the task queue is doing right now (worker, queued, in-flight)."""
+    repo = get_repo()
+    alive, health_text = await _worker_health()
+
+    queue_depth = 0
+    in_progress = 0
+    retry_count = 0
+    try:
+        pool = await orchestrator._get_pool()
+
+        # Queued jobs: the arq queue list(s)
+        for key in await pool.keys("arq:queue*"):
+            key = key.decode() if isinstance(key, bytes) else key
+            if key.endswith(":health-check"):
+                continue
+            qtype = await pool.type(key)
+            if qtype == "list":
+                queue_depth += await pool.llen(key)
+            elif qtype == "zset":
+                retry_count += await pool.zcard(key)
+
+        # In-flight jobs: arq:in-progress* hashes
+        for key in await pool.keys("arq:in-progress*"):
+            qtype = await pool.type(key)
+            if qtype == "hash":
+                in_progress += await pool.hlen(key)
+    except Exception:
+        pass  # Redis down — still report the DB-side picture
+
+    app_counts = await repo.get_application_counts()
+    job_stats = await repo.get_job_counts()
+    by_status = job_stats["jobs_by_status"]
+    last_event = await repo.get_last_event_at()
+
+    try:
+        apply_cfg = await ConfigService().get_apply_config()
+        dry_run = bool(apply_cfg.get("dry_run", True))
+    except Exception:
+        dry_run = True
+
+    return {
+        "worker_alive": alive,
+        "worker_heartbeat": health_text,
+        "queued_tasks": queue_depth,
+        "in_progress_tasks": in_progress,
+        "retry_tasks": retry_count,
+        "last_activity": last_event.isoformat() if last_event else None,
+        "pending_confirmations": app_counts.get("paused_awaiting_input", 0),
+        "jobs_waiting": sum(by_status.get(s, 0) for s in ("discovered", "filtered", "queued")),
+        "dry_run_mode": dry_run,
+    }
 
 
 # ==================== DATA ENDPOINTS ====================
 
 @app.get("/api/stats")
 async def get_stats():
-    """Get overall statistics from the database."""
+    """Get overall statistics from the database (honest breakdown)."""
     try:
         repo = get_repo()
         job_stats = await repo.get_job_counts()
-
-        # Count applications and emails
-        async with repo.pool.acquire() as conn:
-            app_count = await conn.fetchval("SELECT COUNT(*) FROM applications")
-            email_count = await conn.fetchval("SELECT COUNT(*) FROM emails WHERE sent_at IS NOT NULL")
-
-        return {
-            "total_jobs": job_stats["total_jobs"],
-            "total_applications": app_count or 0,
-            "total_emails": email_count or 0,
-            "jobs_by_region": job_stats["jobs_by_region"],
-            "jobs_by_status": job_stats["jobs_by_status"],
-            "session_active": False,  # TODO: track via arq
-            "current_status": "idle",
-        }
+        payload = await _status_payload()
+        payload.update(
+            {
+                "total_jobs": payload.pop("jobs_found", 0),
+                "applications_submitted": payload["applications_sent"],
+                "total_emails": payload["emails_sent"],
+                "jobs_by_region": job_stats["jobs_by_region"],
+                "jobs_by_status": job_stats["jobs_by_status"],
+                "current_status": "running" if await _worker_health() else "idle",
+            }
+        )
+        return payload
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -349,6 +551,7 @@ async def get_config():
                 "domains": blocklist.domains,
             },
             "sources": sources,
+            "apply": {"dry_run": (await config_service.get_apply_config()).get("dry_run", True)},
         }
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -445,20 +648,21 @@ async def websocket_endpoint(websocket: WebSocket):
             "details": "Connected to server",
         })
 
-        # Send initial stats
+        # Send initial stats + the last N agent events (so a freshly
+        # opened dashboard immediately shows what the bot has been doing)
         try:
             repo = get_repo()
-            job_stats = await repo.get_job_counts()
-            async with repo.pool.acquire() as conn:
-                app_count = await conn.fetchval("SELECT COUNT(*) FROM applications")
-                email_count = await conn.fetchval("SELECT COUNT(*) FROM emails WHERE sent_at IS NOT NULL")
+            payload = await _status_payload()
+            spawned = orchestrator.is_worker_running()
+            alive, _health = await _worker_health()
+            payload["worker_running"] = spawned or alive
+            payload["status"] = "running" if (spawned or alive) else "idle"
+            await websocket.send_json({"type": "stats", "data": payload})
+
+            events = await repo.get_events(limit=40)
             await websocket.send_json({
-                "type": "stats",
-                "data": {
-                    "total_jobs": job_stats["total_jobs"],
-                    "total_applications": app_count or 0,
-                    "total_emails": email_count or 0,
-                },
+                "type": "history",
+                "events": [e.model_dump(mode="json") for e in events],
             })
         except Exception:
             pass

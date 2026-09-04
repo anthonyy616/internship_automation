@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     region TEXT NOT NULL,                    -- 'EU', 'UK', 'Nigeria', 'Turkiye'
     url TEXT NOT NULL UNIQUE,
     description TEXT,
-    status TEXT DEFAULT 'discovered',        -- discovered|filtered|queued|applied|emailed|failed|failed_needs_manual
+    status TEXT DEFAULT 'discovered',        -- discovered|filtered|queued|applying|dry_run|applied|emailed|failed|failed_needs_manual
     discovered_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -37,7 +37,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_external ON jobs(source, external_id)
 CREATE TABLE IF NOT EXISTS applications (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     job_id UUID REFERENCES jobs(id) ON DELETE CASCADE,
-    status TEXT DEFAULT 'queued',            -- queued|filling|paused_awaiting_input|applied|failed
+    status TEXT DEFAULT 'queued',            -- queued|filling|paused_awaiting_input|dry_run|applied|failed
     applied_via TEXT,                        -- 'form' | 'email'
     ats_platform TEXT,                       -- 'greenhouse', 'lever', 'workday', 'ashby', 'unknown'
     resume_version TEXT,

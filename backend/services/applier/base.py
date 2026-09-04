@@ -21,6 +21,7 @@ class ApplyResult:
     filled_fields: Dict[str, str] = field(default_factory=dict)
     needs_input: bool = False          # a Category-A question was hit
     pending_confirmation_id: str = ""
+    dry_run: bool = False              # form filled + screenshotted but NOT submitted
 
 
 @dataclass

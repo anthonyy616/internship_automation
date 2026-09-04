@@ -18,7 +18,7 @@ from backend.config import settings
 from backend.workers.scrape_worker import scrape_source
 from backend.workers.apply_worker import apply_to_job
 from backend.workers.email_worker import send_email
-from backend.workers.scheduler import schedule_scraping, process_queue
+from backend.workers.scheduler import schedule_scraping, process_queue, process_queue_now
 
 
 async def startup(ctx: dict):
@@ -51,6 +51,14 @@ async def startup(ctx: dict):
         event_logger=ctx["event_logger"],
     )
 
+    # Operator notifications (Telegram + email proof of real submissions)
+    from backend.services.notify import Notifier
+    ctx["notifier"] = Notifier(
+        repo=repo,
+        config_service=ctx["config_service"],
+        event_logger=ctx["event_logger"],
+    )
+
 
 async def shutdown(ctx: dict):
     """Close the database pool on worker shutdown."""
@@ -63,6 +71,7 @@ class WorkerSettings:
         scrape_source,
         apply_to_job,
         send_email,
+        process_queue_now,
     ]
     on_startup = startup
     on_shutdown = shutdown
@@ -72,12 +81,24 @@ class WorkerSettings:
     # Windows ::1 — see backend/config.py).
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
 
-    # Max jobs processed per worker before restarting (safety valve)
-    max_jobs = 500
+    # How many jobs run CONCURRENTLY. Each apply opens a full browser
+    # session (CPU + RAM heavy); arq's default is 10 and a 500 setting here
+    # once let dozens of Chromium sessions run at once, thrashing the
+    # machine into mass "no visible form fields" timeouts. 3 keeps the
+    # queue moving without starving each session.
+    max_jobs = 3
     # Job timeout — long browser sessions may take a while
     job_timeout = 600
 
+    # Heartbeat: arq re-sets this key every 15s while the worker is alive
+    # (TTL ~16s). The dashboard reads it to show "worker alive/dead" and
+    # the /api/queue endpoint reports it.
+    health_check_key = "job-agent:worker-health"
+    health_check_interval = 15
+
     cron_jobs = [
         cron(schedule_scraping, minute={0, 30}, run_at_startup=False),
-        cron(process_queue, minute=5, run_at_startup=False),
+        # Drain the apply queue every 5 minutes (not hourly) and right at
+        # worker startup so queued jobs don't sit stale after a restart.
+        cron(process_queue, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}, run_at_startup=True),
     ]

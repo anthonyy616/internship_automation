@@ -131,20 +131,28 @@
                     </form>
                 </div>
 
-                <!-- Stats Cards -->
+                <!-- Stats Cards (truthful: sent = real submissions only) -->
                 <div class="stats-grid">
                     <div class="stat-card glass-card">
                         <div class="stat-icon">💼</div>
                         <div class="stat-content">
                             <span class="stat-value" id="statJobsFound">0</span>
-                            <span class="stat-label">Jobs Found</span>
+                            <span class="stat-label" id="statJobsFoundLabel">Jobs Discovered</span>
                         </div>
                     </div>
                     <div class="stat-card glass-card">
+                        <div class="stat-icon">⏳</div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="statAwaiting">0</span>
+                            <span class="stat-label">Awaiting Apply</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass-card" id="applicationsCard">
                         <div class="stat-icon">📝</div>
                         <div class="stat-content">
                             <span class="stat-value" id="statApplications">0</span>
-                            <span class="stat-label">Applications</span>
+                            <span class="stat-label">Applications Sent (real)</span>
+                            <span class="stat-sub" id="statApplicationsSub"></span>
                         </div>
                     </div>
                     <div class="stat-card glass-card">
@@ -155,23 +163,51 @@
                         </div>
                     </div>
                     <div class="stat-card glass-card">
-                        <div class="stat-icon">🌍</div>
+                        <div class="stat-icon">🖼️</div>
                         <div class="stat-content">
-                            <span class="stat-value" id="statRegions">-</span>
-                            <span class="stat-label">Active Regions</span>
+                            <span class="stat-value" id="statDryRuns">0</span>
+                            <span class="stat-label">Dry-run Fills</span>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Queue / Worker status -->
+                <div class="queue-bar glass-card" id="queueBar">
+                    <div class="queue-item">
+                        <span class="queue-label">Worker</span>
+                        <span class="queue-val" id="qWorker">…</span>
+                    </div>
+                    <div class="queue-item">
+                        <span class="queue-label">In queue</span>
+                        <span class="queue-val" id="qQueued">–</span>
+                    </div>
+                    <div class="queue-item">
+                        <span class="queue-label">In progress</span>
+                        <span class="queue-val" id="qInProgress">–</span>
+                    </div>
+                    <div class="queue-item">
+                        <span class="queue-label">Awaiting jobs</span>
+                        <span class="queue-val" id="qAwaiting">–</span>
+                    </div>
+                    <div class="queue-item">
+                        <span class="queue-label">Last activity</span>
+                        <span class="queue-val" id="qLastActivity">–</span>
+                    </div>
+                    <div class="queue-item">
+                        <span class="queue-label">Mode</span>
+                        <span class="queue-val" id="qMode">–</span>
                     </div>
                 </div>
 
                 <!-- Real-time Logs -->
                 <div class="logs-card glass-card">
                     <div class="logs-header">
-                        <h3>Real-time Activity</h3>
+                        <h3>Live Activity — what the bot is doing right now</h3>
                         <button class="btn btn-small" id="clearLogs">Clear</button>
                     </div>
                     <div class="logs-container" id="logsContainer">
                         <div class="log-placeholder">
-                            <span>Activity logs will appear here when the bot starts...</span>
+                            <span>Waiting for activity… open the bot (worker) and scrape/apply events will stream here live, with errors shown in red and full details in the terminal.</span>
                         </div>
                     </div>
                 </div>
@@ -191,9 +227,13 @@
                         </select>
                         <select id="jobsStatusFilter">
                             <option value="">All Status</option>
-                            <option value="found">Found</option>
-                            <option value="applied">Applied</option>
-                            <option value="emailed">Emailed</option>
+                            <option value="discovered">Discovered</option>
+                            <option value="filtered">Filtered</option>
+                            <option value="queued">Queued</option>
+                            <option value="applying">Applying</option>
+                            <option value="applied">Applied ✓</option>
+                            <option value="dry_run">Dry-run</option>
+                            <option value="failed_needs_manual">Failed</option>
                         </select>
                     </div>
                 </div>
@@ -207,11 +247,12 @@
                                 <th>Source</th>
                                 <th>Status</th>
                                 <th>Date</th>
+                                <th>Action</th>
                             </tr>
                         </thead>
                         <tbody id="jobsTableBody">
                             <tr class="empty-row">
-                                <td colspan="6">No jobs found yet. Start the bot to begin searching.</td>
+                                <td colspan="7">No jobs found yet. Start the bot to begin searching.</td>
                             </tr>
                         </tbody>
                     </table>
@@ -224,11 +265,11 @@
                     <h2>Activity Logs</h2>
                     <div class="filters">
                         <select id="logsLevelFilter">
-                            <option value="">All Levels</option>
-                            <option value="INFO">Info</option>
-                            <option value="SUCCESS">Success</option>
-                            <option value="WARNING">Warning</option>
-                            <option value="ERROR">Error</option>
+                            <option value="">All Outcomes</option>
+                            <option value="started">Started</option>
+                            <option value="success">Success</option>
+                            <option value="failed">Failed</option>
+                            <option value="escalated">Asked user</option>
                         </select>
                     </div>
                 </div>
@@ -237,6 +278,9 @@
                         <span>No logs available.</span>
                     </div>
                 </div>
+            </section>
+
+
             </section>
         </main>
     </div>

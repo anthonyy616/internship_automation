@@ -4,7 +4,7 @@
 <h2 class="text-2xl font-bold text-white mb-6">Applications</h2>
 <div class="mb-4 flex gap-2 text-sm">
     <a href="/admin/applications" class="px-3 py-1 rounded {{ 'bg-indigo-600' if not status_filter else 'bg-slate-800' }}">All</a>
-    {% for s in ['queued', 'filling', 'paused_awaiting_input', 'applied', 'failed'] %}
+    {% for s in ['queued', 'filling', 'paused_awaiting_input', 'dry_run', 'applied', 'failed'] %}
     <a href="/admin/applications?status={{ s }}" class="px-3 py-1 rounded {{ 'bg-indigo-600' if status_filter == s else 'bg-slate-800' }}">{{ s }}</a>
     {% endfor %}
 </div>
@@ -26,7 +26,7 @@
                 <td class="px-4 py-2 text-white">{{ row.job.title if row.job else '—' }}</td>
                 <td class="px-4 py-2 text-slate-400">{{ row.job.company if row.job else '—' }}</td>
                 <td class="px-4 py-2">
-                    <span class="px-2 py-0.5 rounded-full text-xs {{ 'bg-emerald-600' if row.app.status == 'applied' else ('bg-amber-600' if row.app.status in ('paused_awaiting_input','queued','filling') else 'bg-rose-600') }}">
+                    <span class="px-2 py-0.5 rounded-full text-xs {{ 'bg-emerald-600' if row.app.status == 'applied' else ('bg-sky-600' if row.app.status == 'dry_run' else ('bg-amber-600' if row.app.status in ('paused_awaiting_input','queued','filling') else 'bg-rose-600')) }}">
                         {{ row.app.status }}
                     </span>
                 </td>

@@ -80,6 +80,11 @@ class Repository:
         description: str = "",
     ) -> Optional[Job]:
         """Insert a job, skip if URL already exists. Returns the job or None."""
+        # Sources that don't provide an external id emit '' — normalise to
+        # NULL so the partial unique index (source, external_id) can't
+        # collide across different jobs of the same source (this used to
+        # crash the whole scrape task with a UniqueViolationError).
+        external_id = external_id or None
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """INSERT INTO jobs (source, external_id, title, company, region, url, description)
@@ -155,6 +160,20 @@ class Repository:
             )
             return [Job(**_row(r)) for r in rows]
 
+    async def get_stale_applying_jobs(self, minutes: int = 20, limit: int = 50) -> List[Job]:
+        """Jobs stuck in 'applying' longer than `minutes` (e.g. the worker
+        was killed mid-browser-session). These are safe to retry — the
+        apply flow restarts and refills from scratch."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT * FROM jobs
+                   WHERE status = 'applying'
+                     AND updated_at < NOW() - ($1 * INTERVAL '1 minute')
+                   ORDER BY updated_at ASC LIMIT $2""",
+                minutes, limit,
+            )
+            return [Job(**_row(r)) for r in rows]
+
     async def get_job_counts(self) -> Dict[str, Any]:
         """Get job counts by region and status."""
         async with self.pool.acquire() as conn:
@@ -219,12 +238,77 @@ class Repository:
             )
             return Application(**_row(row)) if row else None
 
+    async def claim_application(self, job_id: str, resumable_statuses: tuple) -> tuple:
+        """Atomically claim the single application row for a job.
+
+        Concurrent apply_to_job runs for the SAME job (duplicate queue
+        entries from cron + manual click) used to race past the dedupe
+        check, creating duplicate application rows and risking a double
+        submission. A session advisory lock keyed by job id serialises the
+        check-and-create.
+
+        Returns ("skip", Application) when an application exists whose
+        status is not resumable, else ("proceed", Application) with either
+        the existing row reset to 'filling' or a brand-new row.
+        """
+        conn = await self.pool.acquire()
+        try:
+            await conn.execute(
+                "SELECT pg_advisory_lock(hashtextextended($1::text, 0))", job_id
+            )
+            row = await conn.fetchrow(
+                "SELECT * FROM applications WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1",
+                job_id,
+            )
+            if row is not None and row["status"] not in resumable_statuses:
+                return "skip", Application(**_row(row))
+            if row is not None:
+                await conn.execute(
+                    "UPDATE applications SET status = 'filling', updated_at = NOW() "
+                    "WHERE id = $1",
+                    row["id"],
+                )
+                row = await conn.fetchrow(
+                    "SELECT * FROM applications WHERE id = $1", row["id"]
+                )
+                return "proceed", Application(**_row(row))
+            new = await conn.fetchrow(
+                "INSERT INTO applications (job_id) VALUES ($1) RETURNING *", job_id
+            )
+            return "proceed", Application(**_row(new))
+        finally:
+            try:
+                await conn.execute(
+                    "SELECT pg_advisory_unlock(hashtextextended($1::text, 0))", job_id
+                )
+            finally:
+                await self.pool.release(conn)
+
     async def get_today_application_count(self) -> int:
-        """Applications created today (for daily caps)."""
+        """Apply attempts created today that are not outright failures.
+
+        Failed attempts must NOT consume the daily cap — otherwise a batch
+        of instant failures (e.g. 46 x 'no visible form fields') swallows
+        the whole quota and blocks every later, healthy application.
+        """
         async with self.pool.acquire() as conn:
             return await conn.fetchval(
-                "SELECT COUNT(*) FROM applications WHERE created_at > CURRENT_DATE"
+                """SELECT COUNT(*) FROM applications
+                   WHERE created_at > CURRENT_DATE AND status <> 'failed'"""
             ) or 0
+
+    async def get_application_counts(self) -> Dict[str, int]:
+        """Applications grouped by status (for honest dashboard metrics)."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT status, COUNT(*) AS n FROM applications GROUP BY status"
+            )
+            return {r["status"]: r["n"] for r in rows}
+
+    async def get_last_event_at(self) -> Optional[datetime]:
+        """Timestamp of the most recent agent event (queue freshness)."""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("SELECT MAX(created_at) FROM agent_events")
 
     async def get_today_email_count(self) -> int:
         """Emails sent today (for daily caps)."""
@@ -402,7 +486,21 @@ class Repository:
         options: Optional[List[str]] = None,
         telegram_message_id: Optional[str] = None,
     ) -> Optional[PendingConfirmation]:
+        """Create a pending confirmation, or return the still-pending one if
+        the same question was already escalated for this application (keeps
+        Telegram from spamming duplicates when a paused application resumes
+        and re-encounters the same unanswered question)."""
         async with self.pool.acquire() as conn:
+            existing = await conn.fetchrow(
+                """SELECT * FROM pending_confirmations
+                   WHERE application_id = $1 AND question_text = $2
+                     AND status = 'pending'
+                   ORDER BY created_at ASC LIMIT 1""",
+                application_id, question_text,
+            )
+            if existing:
+                return PendingConfirmation(**_row(existing))
+
             row = await conn.fetchrow(
                 """INSERT INTO pending_confirmations
                    (application_id, question_text, field_type, options, telegram_message_id)

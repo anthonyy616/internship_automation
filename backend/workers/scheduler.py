@@ -49,7 +49,12 @@ async def schedule_scraping(ctx: dict) -> dict:
 
 
 async def process_queue(ctx: dict) -> dict:
-    """Move discovered/filtered/queued jobs into the apply queue (with cap)."""
+    """Move jobs into the apply queue (with cap).
+
+    Picks up discovered/filtered/queued jobs, requeues stale 'applying'
+    jobs (worker was killed mid-run), and — once dry-run mode is disabled —
+    re-applies 'dry_run' jobs so they get submitted for real.
+    """
     repo = ctx["repo"]
     config = ctx["config_service"]
     logger = ctx["event_logger"]
@@ -60,13 +65,35 @@ async def process_queue(ctx: dict) -> dict:
     if remaining == 0:
         return {"status": "skipped", "reason": "daily_limit_reached"}
 
-    jobs = await repo.get_jobs_by_status(["discovered", "filtered", "queued"], limit=remaining)
+    try:
+        apply_cfg = await config.get_apply_config()
+        dry_run_on = bool(apply_cfg.get("dry_run", True))
+    except Exception:
+        dry_run_on = True
+
+    statuses = ["discovered", "filtered", "queued"]
+    if not dry_run_on:
+        # Going live: dry-run-filled jobs are now submitted for real
+        statuses.append("dry_run")
+
+    jobs = await repo.get_jobs_by_status(statuses, limit=remaining)
+
+    # Recover applies that were killed mid-browser-session
+    stale = await repo.get_stale_applying_jobs(minutes=20, limit=remaining - len(jobs) if len(jobs) < remaining else 0)
+    for job in stale:
+        if job.id not in {j.id for j in jobs}:
+            jobs.append(job)
+
     if not jobs:
         return {"status": "ok", "enqueued": 0}
 
     redis = ctx.get("redis")
     enqueued = 0
+    requeued_stale = 0
     for job in jobs:
+        was_stale = job.status == "applying"
+        if was_stale:
+            requeued_stale += 1
         await repo.update_job_status(str(job.id), "queued")
         if redis is not None and hasattr(redis, "enqueue_job"):
             try:
@@ -77,6 +104,17 @@ async def process_queue(ctx: dict) -> dict:
 
     await logger.success(
         "system", "queue_processed",
-        metadata={"jobs_moved": len(jobs), "enqueued": enqueued, "remaining_cap": remaining},
+        metadata={
+            "jobs_moved": len(jobs),
+            "enqueued": enqueued,
+            "stale_recovered": requeued_stale,
+            "remaining_cap": remaining,
+        },
     )
     return {"status": "ok", "enqueued": enqueued}
+
+
+async def process_queue_now(ctx: dict) -> dict:
+    """Enqueueable alias of process_queue — lets the API request an
+    immediate drain instead of waiting for the next cron sweep."""
+    return await process_queue(ctx)

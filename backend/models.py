@@ -23,7 +23,9 @@ class JobStatus(str, Enum):
     DISCOVERED = "discovered"
     FILTERED = "filtered"
     QUEUED = "queued"
+    APPLYING = "applying"
     APPLIED = "applied"
+    DRY_RUN = "dry_run"
     EMAILED = "emailed"
     FAILED = "failed"
     FAILED_NEEDS_MANUAL = "failed_needs_manual"
@@ -33,6 +35,7 @@ class ApplicationStatus(str, Enum):
     QUEUED = "queued"
     FILLING = "filling"
     PAUSED_AWAITING_INPUT = "paused_awaiting_input"
+    DRY_RUN = "dry_run"
     APPLIED = "applied"
     FAILED = "failed"
 
